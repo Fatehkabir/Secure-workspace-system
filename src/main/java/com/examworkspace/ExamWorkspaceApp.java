@@ -1,0 +1,77 @@
+package com.examworkspace;
+
+import com.examworkspace.db.Database;
+import com.examworkspace.model.Room;
+import com.examworkspace.model.Teacher;
+import com.examworkspace.room.RoomService;
+import com.examworkspace.ui.DashboardView;
+import com.examworkspace.ui.LoginView;
+import com.examworkspace.ui.RegisterView;
+import com.examworkspace.ui.RoomView;
+import com.examworkspace.ui.Theme;
+import javafx.animation.FadeTransition;
+import javafx.application.Application;
+import javafx.geometry.Pos;
+import javafx.scene.Parent;
+import javafx.scene.Scene;
+import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
+import javafx.stage.Stage;
+import javafx.util.Duration;
+
+public class ExamWorkspaceApp extends Application {
+
+    private final StackPane content = new StackPane();
+    private final VBox toastLayer = new VBox(8);
+
+    @Override
+    public void start(Stage stage) {
+        Database.initialize();
+
+        toastLayer.getStyleClass().add("toast-layer");
+        toastLayer.setAlignment(Pos.BOTTOM_RIGHT);
+        toastLayer.setFillWidth(false);
+        toastLayer.setMouseTransparent(true);
+        toastLayer.setPickOnBounds(false);
+
+        StackPane root = new StackPane(content, toastLayer);
+        root.getStyleClass().add("app-canvas");
+        Scene scene = new Scene(root, 1180, 760);
+        Theme.applyTo(scene);
+
+        stage.setTitle("Exam Workspace");
+        stage.setMinWidth(920);
+        stage.setMinHeight(620);
+        stage.setScene(scene);
+        showLogin();
+        stage.show();
+    }
+
+    public void showLogin() {
+        setContent(new LoginView(this));
+    }
+
+    public void showRegister() {
+        setContent(new RegisterView(this));
+    }
+
+    public void showDashboard(Teacher teacher) {
+        setContent(new DashboardView(this, teacher, new RoomService(teacher)));
+    }
+
+    public void showRoom(Teacher teacher, RoomService rooms, Room room) {
+        setContent(new RoomView(this, teacher, rooms, room));
+    }
+
+    private void setContent(Parent view) {
+        content.getChildren().setAll(view);
+        FadeTransition fade = new FadeTransition(Duration.millis(220), view);
+        fade.setFromValue(0);
+        fade.setToValue(1);
+        fade.play();
+    }
+
+    public static void main(String[] args) {
+        launch(args);
+    }
+}
