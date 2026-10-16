@@ -4,6 +4,7 @@ import com.examworkspace.ExamWorkspaceApp;
 import com.examworkspace.apps.AppLauncher;
 import com.examworkspace.model.AppEntry;
 import com.examworkspace.model.Room;
+import com.examworkspace.model.RoomMember;
 import com.examworkspace.model.RoomStatus;
 import com.examworkspace.model.Teacher;
 import com.examworkspace.room.RoomService;
@@ -67,6 +68,7 @@ public class DashboardView extends BorderPane {
 
     private final List<Room> loaded = new ArrayList<>();
     private final Map<Long, List<AppEntry>> apps = new HashMap<>();
+    private final Map<Long, List<RoomMember>> members = new HashMap<>();
     private final Map<Long, Label> statusBadges = new HashMap<>();
     private final Map<Long, StackPane> statusDots = new HashMap<>();
     private final Label livePill = new Label();
@@ -196,6 +198,10 @@ public class DashboardView extends BorderPane {
             loaded.addAll(rooms.listRooms());
             apps.clear();
             apps.putAll(rooms.appsByRoom());
+            members.clear();
+            for (Room room : loaded) {
+                members.put(room.id(), rooms.listMembers(room));
+            }
         } catch (RuntimeException ex) {
             Ui.showError(this, "Could not load rooms", ex);
         }
@@ -289,7 +295,9 @@ public class DashboardView extends BorderPane {
         styleStatus(badge, room.statusAt(now));
         statusBadges.put(room.id(), badge);
 
-        Label count = new Label(room.appCount() == 1 ? "1 app" : room.appCount() + " apps");
+        int joined = members.getOrDefault(room.id(), List.of()).size();
+        Label count = new Label((room.appCount() == 1 ? "1 app" : room.appCount() + " apps")
+                + "  ·  " + (joined == 1 ? "1 joined" : joined + " joined"));
         count.getStyleClass().add("card-meta");
         HBox top = new HBox(8, badge, Ui.spacer(), count);
         top.setAlignment(Pos.CENTER_LEFT);
@@ -378,8 +386,45 @@ public class DashboardView extends BorderPane {
         HBox scheduleRow = new HBox(8, panelStatus, Ui.spacer(), editSchedule, changePassword);
         scheduleRow.setAlignment(Pos.CENTER_LEFT);
 
-        panelHost.getChildren().add(new VBox(14, head, scheduleRow, credentials(room), appWrap(room)));
+        panelHost.getChildren().add(new VBox(14, head, scheduleRow, credentials(room),
+                membersSection(room), appWrap(room)));
         panelHost.getStyleClass().setAll("exam-panel");
+    }
+
+    private Node membersSection(Room room) {
+        List<RoomMember> roster = members.getOrDefault(room.id(), List.of());
+        Label title = new Label("Joined students");
+        title.getStyleClass().add("panel-title");
+        Label subtitle = new Label(roster.isEmpty()
+                ? "No students have joined yet."
+                : roster.size() == 1 ? "1 student in this room" : roster.size() + " students in this room");
+        subtitle.getStyleClass().add("panel-subtitle");
+
+        VBox block = new VBox(10, new VBox(2, title, subtitle));
+        if (roster.isEmpty()) {
+            return block;
+        }
+
+        FlowPane flow = new FlowPane(10, 10);
+        for (RoomMember member : roster) {
+            flow.getChildren().add(memberChip(member));
+        }
+        block.getChildren().add(flow);
+        return block;
+    }
+
+    private Node memberChip(RoomMember member) {
+        Label roll = new Label(member.rollNumber());
+        roll.getStyleClass().add("app-chip-name");
+        Label name = new Label(member.displayName());
+        name.getStyleClass().add("app-chip-kind");
+        Label kind = new Label(member.isGuest() ? "Guest" : "Signed in");
+        kind.getStyleClass().add("chip");
+        VBox text = new VBox(1, roll, name);
+        HBox chip = new HBox(8, text, kind);
+        chip.setAlignment(Pos.CENTER_LEFT);
+        chip.getStyleClass().add("app-chip");
+        return chip;
     }
 
     private Node credentials(Room room) {

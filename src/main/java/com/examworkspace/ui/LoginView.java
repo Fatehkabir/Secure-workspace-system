@@ -68,6 +68,12 @@ public class LoginView extends HBox {
         footer.setAlignment(Pos.CENTER);
         footer.getStyleClass().add("form-footer");
 
+        Hyperlink student = new Hyperlink("Join as a student");
+        student.setOnAction(e -> app.showStudentEntry());
+        HBox studentFooter = new HBox(2, new Label("Taking an exam?"), student);
+        studentFooter.setAlignment(Pos.CENTER);
+        studentFooter.getStyleClass().add("form-footer");
+
         signIn.setOnAction(e -> {
             banner.setVisible(false);
             signIn.setDisable(true);
@@ -92,7 +98,8 @@ public class LoginView extends HBox {
                 signIn,
                 divider,
                 google,
-                footer);
+                footer,
+                studentFooter);
         AuthLayout.fill(this, form);
         Platform.runLater(username::requestFocus);
     }

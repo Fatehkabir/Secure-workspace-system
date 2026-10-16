@@ -4,6 +4,7 @@ import com.examworkspace.db.DataAccessException;
 import com.examworkspace.db.Database;
 import com.examworkspace.model.AppEntry;
 import com.examworkspace.model.Room;
+import com.examworkspace.model.RoomMember;
 import com.examworkspace.model.Teacher;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -190,6 +191,39 @@ public class RoomService {
 
     public List<AppEntry> listApps(Room room) {
         return appsByRoom().getOrDefault(room.id(), List.of());
+    }
+
+    public List<RoomMember> listMembers(Room room) {
+        String sql = """
+                SELECT m.id, m.room_id, m.student_id, m.roll_number, m.display_name, m.joined_at
+                FROM room_members m
+                JOIN rooms r ON r.id = m.room_id
+                WHERE m.room_id = ? AND r.teacher_id = ?
+                ORDER BY LOWER(m.roll_number)""";
+        try (Connection conn = Database.connect(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, room.id());
+            ps.setLong(2, teacher.id());
+            List<RoomMember> members = new ArrayList<>();
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    long studentId = rs.getLong("student_id");
+                    Long studentRef = rs.wasNull() ? null : studentId;
+                    Instant joinedAt = rs.getTimestamp("joined_at") == null
+                            ? Instant.EPOCH
+                            : rs.getTimestamp("joined_at").toInstant();
+                    members.add(new RoomMember(
+                            rs.getLong("id"),
+                            rs.getLong("room_id"),
+                            studentRef,
+                            rs.getString("roll_number"),
+                            rs.getString("display_name"),
+                            joinedAt));
+                }
+            }
+            return members;
+        } catch (SQLException e) {
+            throw new DataAccessException("Could not load room members", e);
+        }
     }
 
     /**

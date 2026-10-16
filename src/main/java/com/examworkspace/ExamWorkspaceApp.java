@@ -2,12 +2,18 @@ package com.examworkspace;
 
 import com.examworkspace.db.Database;
 import com.examworkspace.model.Room;
+import com.examworkspace.model.Student;
 import com.examworkspace.model.Teacher;
 import com.examworkspace.room.RoomService;
 import com.examworkspace.ui.DashboardView;
 import com.examworkspace.ui.LoginView;
 import com.examworkspace.ui.RegisterView;
 import com.examworkspace.ui.RoomView;
+import com.examworkspace.ui.StudentDashboardView;
+import com.examworkspace.ui.StudentEntryView;
+import com.examworkspace.ui.StudentLoginView;
+import com.examworkspace.ui.StudentRegisterView;
+import com.examworkspace.ui.StudentRoomView;
 import com.examworkspace.ui.Theme;
 import javafx.animation.FadeTransition;
 import javafx.application.Application;
@@ -61,6 +67,26 @@ public class ExamWorkspaceApp extends Application {
 
     public void showRoom(Teacher teacher, RoomService rooms, Room room) {
         setContent(new RoomView(this, teacher, rooms, room));
+    }
+
+    public void showStudentEntry() {
+        setContent(new StudentEntryView(this));
+    }
+
+    public void showStudentLogin() {
+        setContent(new StudentLoginView(this));
+    }
+
+    public void showStudentRegister() {
+        setContent(new StudentRegisterView(this));
+    }
+
+    public void showStudentDashboard(Student student) {
+        setContent(new StudentDashboardView(this, student));
+    }
+
+    public void showStudentRoom(Room room, Student student) {
+        setContent(new StudentRoomView(this, room, student));
     }
 
     private void setContent(Parent view) {

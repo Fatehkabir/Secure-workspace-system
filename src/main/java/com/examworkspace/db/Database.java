@@ -76,6 +76,23 @@ public final class Database {
                         target_type   VARCHAR(16)   NOT NULL,
                         UNIQUE (room_id, launch_target)
                     )""");
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS students (
+                        id            BIGINT AUTO_INCREMENT PRIMARY KEY,
+                        username      VARCHAR(64)  NOT NULL UNIQUE,
+                        full_name     VARCHAR(128) NOT NULL,
+                        password_hash VARCHAR(512) NOT NULL,
+                        created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )""");
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS room_members (
+                        id            BIGINT AUTO_INCREMENT PRIMARY KEY,
+                        room_id       BIGINT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+                        student_id    BIGINT REFERENCES students(id) ON DELETE SET NULL,
+                        roll_number   VARCHAR(64)  NOT NULL,
+                        display_name  VARCHAR(128) NOT NULL,
+                        joined_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )""");
 
             addColumn(st, "teachers", "google_sub", "VARCHAR(255)");
             addColumn(st, "teachers", "email", "VARCHAR(255)");
@@ -86,6 +103,9 @@ public final class Database {
             backfillRooms(conn);
             st.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_teachers_google_sub ON teachers(google_sub)");
             st.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_rooms_code ON rooms(room_code)");
+            st.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS ux_room_members_roll
+                    ON room_members(room_id, roll_number)""");
             try {
                 st.execute("DROP INDEX IF EXISTS ux_rooms_password");
             } catch (SQLException ignored) {
