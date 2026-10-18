@@ -69,6 +69,10 @@ public class ExamWorkspaceApp extends Application {
         setContent(new RoomView(this, teacher, rooms, room));
     }
 
+    public void showRoom(Teacher teacher, RoomService rooms, Room room, boolean selectMonitorTab) {
+        setContent(new RoomView(this, teacher, rooms, room, selectMonitorTab));
+    }
+
     public void showStudentEntry() {
         setContent(new StudentEntryView(this));
     }

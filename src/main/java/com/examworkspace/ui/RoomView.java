@@ -23,6 +23,8 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.SelectionMode;
+import javafx.scene.control.Tab;
+import javafx.scene.control.TabPane;
 import javafx.scene.control.TextField;
 import javafx.scene.input.KeyCode;
 import javafx.scene.layout.HBox;
@@ -45,8 +47,13 @@ public class RoomView extends AppShell {
     private final Label subtitle = new Label();
     private final Label selectionLabel = new Label();
     private final TextField search = Ui.searchField("Search apps in this room");
+    private final RoomMonitorPanel monitorPanel;
 
     public RoomView(ExamWorkspaceApp app, Teacher teacher, RoomService rooms, Room room) {
+        this(app, teacher, rooms, room, false);
+    }
+
+    public RoomView(ExamWorkspaceApp app, Teacher teacher, RoomService rooms, Room room, boolean selectMonitorTab) {
         super(app, teacher, room.name());
         this.rooms = rooms;
         this.room = room;
@@ -113,7 +120,34 @@ public class RoomView extends AppShell {
                 "Add the programs students are allowed to open during this exam. "
                         + "Everything installed on this computer is available.", addFirst);
 
-        setPage(header, body);
+        Tab appsTab = new Tab("Apps", body);
+        appsTab.setClosable(false);
+        this.monitorPanel = new RoomMonitorPanel(room);
+        Tab monitorTab = new Tab("Live Monitor", monitorPanel);
+        monitorTab.setClosable(false);
+        TabPane tabs = new TabPane(appsTab, monitorTab);
+        tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        tabs.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
+            if (newTab == monitorTab) {
+                monitorPanel.refreshAllowedApps();
+            }
+        });
+        if (selectMonitorTab) {
+            tabs.getSelectionModel().select(monitorTab);
+        }
+
+        // Flags from students are read for as long as this room page is on screen -- whichever tab
+        // is showing -- so the teacher hears the beep and sees a toast even while on the Apps tab.
+        monitorPanel.setNotifier(message -> Ui.toast(this, "\uD83D\uDEA8 " + message, false));
+        sceneProperty().addListener((obs, oldScene, newScene) -> {
+            if (newScene != null) {
+                monitorPanel.startPolling();
+            } else {
+                monitorPanel.stopPolling();
+            }
+        });
+
+        setPage(header, tabs);
         refresh();
     }
 
@@ -137,6 +171,9 @@ public class RoomView extends AppShell {
             body.getChildren().setAll(isEmpty ? emptyArea : listArea);
             search.setVisible(!isEmpty);
             search.setManaged(!isEmpty);
+            if (monitorPanel != null) {
+                monitorPanel.refreshAllowedApps();
+            }
         } catch (RuntimeException ex) {
             Ui.showError(this, "Could not load apps", ex);
         }

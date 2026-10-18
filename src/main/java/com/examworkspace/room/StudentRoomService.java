@@ -7,6 +7,7 @@ import com.examworkspace.model.JoinableRoom;
 import com.examworkspace.model.Room;
 import com.examworkspace.model.RoomStatus;
 import com.examworkspace.model.Student;
+import com.examworkspace.monitor.SessionIdentity;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -145,6 +146,8 @@ public class StudentRoomService {
                 insert.setString(4, displayName);
                 insert.executeUpdate();
             }
+            // Remember who joined, so foreground-app flags carry the same roll number/name as the roster.
+            SessionIdentity.remember(room.id(), roll, displayName);
             return room;
         } catch (SQLException e) {
             if (isUniqueViolation(e)) {

@@ -363,13 +363,16 @@ public class DashboardView extends BorderPane {
         Button browse = new Button("Browse");
         browse.getStyleClass().add("quiet");
         browse.setOnAction(e -> browseExe(room));
+        Button liveMonitor = new Button("Live Monitor", Icons.of(Icons.MONITOR, 14));
+        liveMonitor.getStyleClass().add("quiet");
+        liveMonitor.setOnAction(e -> app.showRoom(teacher, rooms, room, true));
         Button workspace = new Button("Open workspace", Icons.of(Icons.APPS, 14));
         workspace.getStyleClass().add("quiet");
         workspace.setOnAction(e -> app.showRoom(teacher, rooms, room));
         Button delete = new Button("Delete room");
         delete.getStyleClass().add("quiet");
         delete.setOnAction(e -> deleteRoom(room));
-        HBox actions = new HBox(8, add, browse, workspace, delete);
+        HBox actions = new HBox(8, add, browse, liveMonitor, workspace, delete);
         actions.setAlignment(Pos.CENTER_RIGHT);
 
         HBox head = new HBox(12, new VBox(2, title, subtitle), Ui.spacer(), actions);

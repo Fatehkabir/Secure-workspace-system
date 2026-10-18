@@ -94,8 +94,26 @@ public final class Database {
                         joined_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )""");
 
+            // One row each time a student's foreground-app check flags an unapproved app.
+            // The student's app writes it; the teacher's Live Monitor tab reads it.
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS room_violations (
+                        id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+                        room_id         BIGINT        NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+                        student_id      BIGINT        REFERENCES students(id) ON DELETE SET NULL,
+                        roll_number     VARCHAR(64),
+                        student_name    VARCHAR(128)  NOT NULL,
+                        detected_app    VARCHAR(512)  NOT NULL,
+                        executable_path VARCHAR(1024),
+                        occurred_at     BIGINT        NOT NULL
+                    )""");
+
             addColumn(st, "teachers", "google_sub", "VARCHAR(255)");
             addColumn(st, "teachers", "email", "VARCHAR(255)");
+            // process_name stores the foreground .exe name for APP_ID entries
+            // (e.g. "calculator.exe") so the student's foreground-app check can
+            // match Windows-Store apps against what it actually sees.
+            addColumn(st, "room_apps", "process_name", "VARCHAR(256)");
             addColumn(st, "rooms", "room_code", "VARCHAR(32)");
             addColumn(st, "rooms", "room_password", "VARCHAR(128)");
             addColumn(st, "rooms", "starts_at", "BIGINT");

@@ -1,5 +1,6 @@
 package com.examworkspace.room;
 
+import com.examworkspace.apps.AppIdResolver;
 import com.examworkspace.db.DataAccessException;
 import com.examworkspace.db.Database;
 import com.examworkspace.model.AppEntry;
@@ -14,6 +15,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -62,7 +64,7 @@ public class RoomService {
 
     public Map<Long, List<AppEntry>> appsByRoom() {
         String sql = """
-                SELECT a.room_id, a.id, a.name, a.launch_target, a.target_type
+                SELECT a.room_id, a.id, a.name, a.launch_target, a.target_type, a.process_name
                 FROM room_apps a JOIN rooms r ON r.id = a.room_id
                 WHERE r.teacher_id = ?
                 ORDER BY LOWER(a.name)""";
@@ -73,7 +75,7 @@ public class RoomService {
                 while (rs.next()) {
                     byRoom.computeIfAbsent(rs.getLong(1), id -> new ArrayList<>())
                             .add(new AppEntry(rs.getLong(2), rs.getString(3), rs.getString(4),
-                                    AppEntry.TargetType.valueOf(rs.getString(5))));
+                                    AppEntry.TargetType.valueOf(rs.getString(5)), rs.getString(6)));
                 }
             }
             return byRoom;
@@ -232,19 +234,35 @@ public class RoomService {
      * @return number of apps actually added
      */
     public int addApps(Room room, List<AppEntry> apps) {
+        // Resolve process names for APP_ID entries that don't already have one.
+        List<String> appIds = apps.stream()
+                .filter(a -> a.targetType() == AppEntry.TargetType.APP_ID && a.processName() == null)
+                .map(AppEntry::launchTarget)
+                .toList();
+        Map<String, String> resolved = appIds.isEmpty() ? Map.of() : AppIdResolver.resolve(appIds);
+
         String sql = """
-                INSERT INTO room_apps (room_id, name, launch_target, target_type)
-                SELECT r.id, ?, ?, ? FROM rooms r
+                INSERT INTO room_apps (room_id, name, launch_target, target_type, process_name)
+                SELECT r.id, ?, ?, ?, ? FROM rooms r
                 WHERE r.id = ? AND r.teacher_id = ?
                   AND NOT EXISTS (SELECT 1 FROM room_apps WHERE room_id = r.id AND launch_target = ?)""";
         try (Connection conn = Database.connect(); PreparedStatement ps = conn.prepareStatement(sql)) {
             for (AppEntry app : apps) {
+                // Determine process name: use existing value, or resolved for APP_ID, or derive from path.
+                String procName = app.processName();
+                if (procName == null && app.targetType() == AppEntry.TargetType.APP_ID) {
+                    procName = resolved.get(app.launchTarget().toLowerCase(Locale.ROOT));
+                }
+                if (procName == null) {
+                    procName = app.resolvedProcessName(); // derives from EXECUTABLE path
+                }
                 ps.setString(1, app.name());
                 ps.setString(2, app.launchTarget());
                 ps.setString(3, app.targetType().name());
-                ps.setLong(4, room.id());
-                ps.setLong(5, teacher.id());
-                ps.setString(6, app.launchTarget());
+                ps.setString(4, procName); // may be null for unresolvable APP_ID entries
+                ps.setLong(5, room.id());
+                ps.setLong(6, teacher.id());
+                ps.setString(7, app.launchTarget());
                 ps.addBatch();
             }
             int added = 0;

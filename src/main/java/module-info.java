@@ -5,6 +5,8 @@ module com.examworkspace {
     requires java.desktop;
     requires jdk.httpserver;
     requires com.h2database;
+    requires com.sun.jna;
+    requires com.sun.jna.platform;
 
     exports com.examworkspace;
 }

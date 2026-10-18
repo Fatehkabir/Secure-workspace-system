@@ -5,10 +5,12 @@ import com.examworkspace.apps.AppLauncher;
 import com.examworkspace.model.AppEntry;
 import com.examworkspace.model.Room;
 import com.examworkspace.model.Student;
+import com.examworkspace.monitor.StudentRoomMonitor;
 import com.examworkspace.room.StudentRoomService;
 import java.io.IOException;
 import java.util.List;
 import java.util.Locale;
+import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -101,6 +103,24 @@ public class StudentRoomView extends StudentShell {
 
         setPage(header, body);
         refresh();
+
+        // Foreground-app check: while the student is in this room, an app that isn't on the
+        // room's allowed list (and isn't this workspace) is flagged to the teacher after a short
+        // grace period. It runs only while this view is on screen and stops when the student
+        // leaves the room, logs out, or closes the app.
+        StudentRoomMonitor monitor = new StudentRoomMonitor(
+                room.id(),
+                student == null ? null : student.id(),
+                student == null ? "Guest" : student.fullName(),
+                message -> Platform.runLater(() -> Ui.toast(this, message, false)),
+                message -> Platform.runLater(() -> Ui.toast(this, message, false)));
+        sceneProperty().addListener((obs, oldScene, newScene) -> {
+            if (newScene != null) {
+                monitor.start();
+            } else {
+                monitor.stop();
+            }
+        });
     }
 
     private void applyFilter(String text) {
