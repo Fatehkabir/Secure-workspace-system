@@ -27,12 +27,26 @@ import javafx.util.Duration;
 
 public class ExamWorkspaceApp extends Application {
 
+    /** Implemented by any screen that must record a student leaving when it stops being shown. */
+    public interface Leavable {
+        void leaveRoom();
+    }
+
     private final StackPane content = new StackPane();
     private final VBox toastLayer = new VBox(8);
+    private Parent currentView;
 
     @Override
     public void start(Stage stage) {
         Database.initialize();
+
+        // Covers the window being closed outright (the X button) while a student is in a room --
+        // navigating to another screen is already handled by StudentRoomView's own scene listener.
+        stage.setOnCloseRequest(e -> {
+            if (currentView instanceof Leavable leavable) {
+                leavable.leaveRoom();
+            }
+        });
 
         toastLayer.getStyleClass().add("toast-layer");
         toastLayer.setAlignment(Pos.BOTTOM_RIGHT);
@@ -69,10 +83,6 @@ public class ExamWorkspaceApp extends Application {
         setContent(new RoomView(this, teacher, rooms, room));
     }
 
-    public void showRoom(Teacher teacher, RoomService rooms, Room room, boolean selectMonitorTab) {
-        setContent(new RoomView(this, teacher, rooms, room, selectMonitorTab));
-    }
-
     public void showStudentEntry() {
         setContent(new StudentEntryView(this));
     }
@@ -94,6 +104,10 @@ public class ExamWorkspaceApp extends Application {
     }
 
     private void setContent(Parent view) {
+        // Navigating away from a Leavable screen (e.g. the student's room) is itself a "leave" --
+        // StudentRoomView's own scene listener already handles this; this covers the window
+        // closing outright, when no navigation happens for that listener to react to.
+        currentView = view;
         content.getChildren().setAll(view);
         FadeTransition fade = new FadeTransition(Duration.millis(220), view);
         fade.setFromValue(0);

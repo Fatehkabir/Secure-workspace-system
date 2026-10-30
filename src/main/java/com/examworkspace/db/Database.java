@@ -18,9 +18,10 @@ public final class Database {
 
     private static final Path DATA_DIR = Path.of(System.getProperty("examworkspace.dataDir",
             Path.of(System.getProperty("user.home"), ".examworkspace").toString()));
-    private static final String URL = "jdbc:h2:file:" + DATA_DIR.resolve("examworkspace").toAbsolutePath();
     private static final String CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     private static final SecureRandom RANDOM = new SecureRandom();
+
+    private static volatile org.h2.jdbcx.JdbcConnectionPool pool;
 
     private Database() {
     }
@@ -29,12 +30,24 @@ public final class Database {
         return DATA_DIR;
     }
 
-    public static Connection connect() throws SQLException {
-        return DriverManager();
+    private static String getUrl() {
+        return "jdbc:h2:file:" + DATA_DIR.resolve("examworkspace").toAbsolutePath()
+                + ";AUTO_SERVER=TRUE"
+                + ";DB_CLOSE_DELAY=-1"
+                + ";LOCK_TIMEOUT=15000"
+                + ";DEFAULT_LOCK_TIMEOUT=15000";
     }
 
-    private static Connection DriverManager() throws SQLException {
-        return java.sql.DriverManager.getConnection(URL, "sa", "");
+    public static Connection connect() throws SQLException {
+        if (pool == null) {
+            synchronized (Database.class) {
+                if (pool == null) {
+                    pool = org.h2.jdbcx.JdbcConnectionPool.create(getUrl(), "sa", "");
+                    pool.setMaxConnections(20);
+                }
+            }
+        }
+        return pool.getConnection();
     }
 
     public static void initialize() {
@@ -91,7 +104,8 @@ public final class Database {
                         student_id    BIGINT REFERENCES students(id) ON DELETE SET NULL,
                         roll_number   VARCHAR(64)  NOT NULL,
                         display_name  VARCHAR(128) NOT NULL,
-                        joined_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        joined_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        left_at       BIGINT
                     )""");
 
             // One row each time a student's foreground-app check flags an unapproved app.
@@ -105,7 +119,8 @@ public final class Database {
                         student_name    VARCHAR(128)  NOT NULL,
                         detected_app    VARCHAR(512)  NOT NULL,
                         executable_path VARCHAR(1024),
-                        occurred_at     BIGINT        NOT NULL
+                        occurred_at     BIGINT        NOT NULL,
+                        screenshot_base64 CLOB
                     )""");
 
             addColumn(st, "teachers", "google_sub", "VARCHAR(255)");
@@ -114,6 +129,12 @@ public final class Database {
             // (e.g. "calculator.exe") so the student's foreground-app check can
             // match Windows-Store apps against what it actually sees.
             addColumn(st, "room_apps", "process_name", "VARCHAR(256)");
+            // left_at: NULL while the student is actively in the room; set when they leave,
+            // so the roster shows real presence and the same roll number/name can rejoin later.
+            addColumn(st, "room_members", "left_at", "BIGINT");
+            // Screenshot captured at the moment a violation was flagged (base64 PNG), shown
+            // next to the student's name on the teacher's Live Monitor. CLOB: can be large.
+            addColumn(st, "room_violations", "screenshot_base64", "CLOB");
             addColumn(st, "rooms", "room_code", "VARCHAR(32)");
             addColumn(st, "rooms", "room_password", "VARCHAR(128)");
             addColumn(st, "rooms", "starts_at", "BIGINT");
@@ -121,9 +142,24 @@ public final class Database {
             backfillRooms(conn);
             st.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_teachers_google_sub ON teachers(google_sub)");
             st.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_rooms_code ON rooms(room_code)");
-            st.execute("""
-                    CREATE UNIQUE INDEX IF NOT EXISTS ux_room_members_roll
-                    ON room_members(room_id, roll_number)""");
+            try {
+                st.execute("DROP INDEX IF EXISTS ux_room_members_roll");
+            } catch (SQLException ignored) {
+            }
+            try {
+                st.execute("""
+                        CREATE UNIQUE INDEX IF NOT EXISTS ux_room_members_name
+                        ON room_members(room_id, display_name)""");
+            } catch (SQLException e) {
+                try {
+                    // Clean up any historical duplicate 'Guest' rows from earlier test runs
+                    st.execute("DELETE FROM room_members WHERE display_name = 'Guest'");
+                    st.execute("""
+                            CREATE UNIQUE INDEX IF NOT EXISTS ux_room_members_name
+                            ON room_members(room_id, display_name)""");
+                } catch (SQLException ignored) {
+                }
+            }
             try {
                 st.execute("DROP INDEX IF EXISTS ux_rooms_password");
             } catch (SQLException ignored) {

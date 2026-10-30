@@ -2,20 +2,36 @@ package com.examworkspace.monitor;
 
 import com.examworkspace.db.Database;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Types;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Where the foreground-app check reports to the teacher.
+ *
+ * <p>The student's app writes a row here each time it flags an unapproved app, and the
+ * teacher's Live Monitor tab reads the rows for its room. Using the same database the
+ * rest of the system already shares (room joins, rosters, ...) means students need no
+ * extra address or setup, and the teacher still sees flags that were raised while they
+ * were not looking at the monitor.
+ *
+ * <p>Every call opens and closes its own short-lived connection (like the rest of the
+ * app), and retries briefly if another running copy of the app holds the database file.
+ */
 public final class ViolationStore {
 
     /** One flagged moment. */
     public record Violation(long id, String rollNumber, String studentName, String detectedApp,
-                            String executablePath, Instant occurredAt) {
+                            String executablePath, Instant occurredAt, String screenshotBase64) {
 
-        /** "2024-CS-042 · Ali Khan", or just the name when there is no roll number. */
+        /** "2024-CS-042 · Ali Khan", or just the name when roll number is omitted or identical to name. */
         public String studentLabel() {
-            if (rollNumber == null || rollNumber.isBlank()) {
+            if (rollNumber == null || rollNumber.isBlank() || rollNumber.equalsIgnoreCase(studentName)) {
                 return studentName;
             }
             return rollNumber + " \u00b7 " + studentName;
@@ -30,15 +46,22 @@ public final class ViolationStore {
     private ViolationStore() {
     }
 
-    /** Records that a student was flagged for this app. */
+    /**
+     * Records that a student was flagged for this app.
+     *
+     * @param screenshotBase64 PNG of the student's screen at the moment of the violation,
+     *                         base64-encoded, or null if the screenshot couldn't be captured
+     *                         (the flag is still recorded either way).
+     */
     public static void record(long roomId, Long studentId, String rollNumber, String studentName,
-                              String detectedApp, String executablePath) throws SQLException {
+                              String detectedApp, String executablePath, String screenshotBase64) throws SQLException {
         withRetry(() -> {
             try (Connection conn = Database.connect();
                  PreparedStatement ps = conn.prepareStatement("""
                          INSERT INTO room_violations
-                             (room_id, student_id, roll_number, student_name, detected_app, executable_path, occurred_at)
-                         VALUES (?, ?, ?, ?, ?, ?, ?)""")) {
+                             (room_id, student_id, roll_number, student_name, detected_app, executable_path,
+                              occurred_at, screenshot_base64)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)""")) {
                 ps.setLong(1, roomId);
                 if (studentId == null) {
                     ps.setNull(2, Types.BIGINT);
@@ -50,6 +73,11 @@ public final class ViolationStore {
                 ps.setString(5, clip(blankTo(detectedApp, "unknown app"), 512));
                 ps.setString(6, clip(executablePath, 1024));
                 ps.setLong(7, System.currentTimeMillis());
+                if (screenshotBase64 == null) {
+                    ps.setNull(8, Types.CLOB);
+                } else {
+                    ps.setString(8, screenshotBase64);
+                }
                 ps.executeUpdate();
                 return null;
             }
@@ -62,7 +90,8 @@ public final class ViolationStore {
             List<Violation> result = new ArrayList<>();
             try (Connection conn = Database.connect();
                  PreparedStatement ps = conn.prepareStatement("""
-                         SELECT id, roll_number, student_name, detected_app, executable_path, occurred_at
+                         SELECT id, roll_number, student_name, detected_app, executable_path, occurred_at,
+                                screenshot_base64
                          FROM room_violations
                          WHERE room_id = ? AND id > ?
                          ORDER BY id""")) {
@@ -71,7 +100,8 @@ public final class ViolationStore {
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         result.add(new Violation(rs.getLong(1), rs.getString(2), rs.getString(3),
-                                rs.getString(4), rs.getString(5), Instant.ofEpochMilli(rs.getLong(6))));
+                                rs.getString(4), rs.getString(5), Instant.ofEpochMilli(rs.getLong(6)),
+                                rs.getString(7)));
                     }
                 }
             }
@@ -102,13 +132,14 @@ public final class ViolationStore {
         throw last;
     }
 
-    /** H2 reports "Database may be already in use" (90020) when another process holds the file. */
+    /** H2 reports "Database may be already in use" (90020) or lock timeout (50200) when another process holds a lock. */
     private static boolean isLockError(SQLException e) {
-        if (e.getErrorCode() == 90020) {
+        if (e.getErrorCode() == 90020 || e.getErrorCode() == 50200) {
             return true;
         }
         String message = e.getMessage();
-        return message != null && (message.contains("already in use") || message.contains("Locked by another process"));
+        return message != null && (message.contains("already in use") || message.contains("Locked by another process")
+                || message.contains("Timeout trying to lock"));
     }
 
     private static String clip(String value, int max) {

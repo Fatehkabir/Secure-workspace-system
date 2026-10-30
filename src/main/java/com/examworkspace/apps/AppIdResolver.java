@@ -9,7 +9,17 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-
+/**
+ * Resolves Windows Store / AppUserModelID app IDs to the .exe process name
+ * that appears in the foreground when the app is running — which is what the
+ * student monitor detects.
+ *
+ * <p>Uses PowerShell's {@code Get-AppxPackage} + {@code Get-AppxPackageManifest}
+ * to look up the app's entry-point executable. Falls back gracefully if
+ * PowerShell is unavailable or the package isn't found.
+ *
+ * <p>Results are cached in-process so repeated calls for the same ID are free.
+ */
 public final class AppIdResolver {
 
     private static final Map<String, String> CACHE = new HashMap<>();
@@ -17,6 +27,17 @@ public final class AppIdResolver {
     private AppIdResolver() {
     }
 
+    /**
+     * Resolves one or more AppUserModelIDs to their foreground exe names.
+     *
+     * <p>The script takes a list of AppIDs (space-separated, single-quoted), looks
+     * up each package's primary executable from its manifest Application element,
+     * and prints {@code appId\texeName.exe} lines.
+     *
+     * @param appIds the AppUserModelIDs to resolve (e.g. {@code Microsoft.WindowsCalculator_…!App})
+     * @return a map from lower-cased AppID → lower-cased exe filename; missing entries mean
+     *         the package was not found or resolution failed.
+     */
     public static Map<String, String> resolve(Iterable<String> appIds) {
         // Collect IDs not already cached.
         Map<String, String> result = new HashMap<>();

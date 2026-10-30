@@ -1,8 +1,25 @@
 package com.examworkspace.monitor;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.Set;
 
-
+/**
+ * One app the teacher allowed in a room, plus everything we know about it,
+ * so the student client can recognise it when it is in the foreground.
+ *
+ * <p>The old approach compared only a saved ".exe name", which was empty or wrong
+ * for most apps added from the installed-apps list. This matches on several signals:
+ * <ol>
+ *   <li>the saved process name,</li>
+ *   <li>the executable path / file name,</li>
+ *   <li>a ".exe" inside the Start-menu app id,</li>
+ *   <li>the app's display name vs the running exe name (Chrome, VS Code, ...),</li>
+ *   <li>the window title, for Microsoft Store apps hosted by ApplicationFrameHost.exe.</li>
+ * </ol>
+ */
 public record AllowedApp(String name, String launchTarget, String targetType, String processName) {
 
     private static final String SEP = "~~";
