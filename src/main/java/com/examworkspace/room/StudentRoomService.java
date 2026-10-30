@@ -90,12 +90,28 @@ public class StudentRoomService {
 
     public Room join(long roomId, String password, String rollNumber, Student student)
             throws RoomService.RoomException {
+        String defaultName = student != null && !student.fullName().isBlank() ? student.fullName() : rollNumber;
+        return join(roomId, password, rollNumber, defaultName, student);
+    }
+
+    public Room join(long roomId, String password, String rollNumber, String studentName, Student student)
+            throws RoomService.RoomException {
         String entered = password == null ? "" : password.strip();
         if (entered.isEmpty()) {
             throw new RoomService.RoomException("Enter the room password.");
         }
-        String roll = validateRoll(rollNumber);
-        String displayName = student != null ? student.fullName() : "Guest";
+        String name = studentName == null ? "" : studentName.strip();
+        if (name.isEmpty()) {
+            if (student != null && !student.fullName().isBlank()) {
+                name = student.fullName().strip();
+            } else {
+                throw new RoomService.RoomException("Enter your name / username.");
+            }
+        }
+        if (name.length() > 128) {
+            throw new RoomService.RoomException("Name must be at most 128 characters.");
+        }
+        String roll = validateRoll(rollNumber, name);
 
         String sql = """
                 SELECT r.id, r.teacher_id, r.name, r.room_code, r.room_password, r.starts_at, r.ends_at,
@@ -129,29 +145,93 @@ public class StudentRoomService {
             if (!room.roomPassword().equals(entered)) {
                 throw new RoomService.RoomException("Incorrect room password.");
             }
-            if (rollTaken(conn, room.id(), roll)) {
-                throw new RoomService.RoomException(
-                        "That roll number has already joined this room.");
-            }
-            try (PreparedStatement insert = conn.prepareStatement("""
-                    INSERT INTO room_members (room_id, student_id, roll_number, display_name)
-                    VALUES (?, ?, ?, ?)""")) {
-                insert.setLong(1, room.id());
-                if (student == null) {
-                    insert.setNull(2, Types.BIGINT);
-                } else {
-                    insert.setLong(2, student.id());
+
+            // A single student can enter multiple times, but no two or more students can have the same name.
+            // Check if there is an existing member row in this room with this name.
+            Long existingMemberId = null;
+            Long existingStudentId = null;
+            boolean isCurrentlyActive = false;
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "SELECT id, student_id, left_at FROM room_members WHERE room_id = ? AND LOWER(display_name) = LOWER(?)")) {
+                ps.setLong(1, room.id());
+                ps.setString(2, name);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        existingMemberId = rs.getLong("id");
+                        long sid = rs.getLong("student_id");
+                        existingStudentId = rs.wasNull() ? null : sid;
+                        rs.getLong("left_at");
+                        isCurrentlyActive = rs.wasNull();
+                    }
                 }
-                insert.setString(3, roll);
-                insert.setString(4, displayName);
-                insert.executeUpdate();
+            }
+
+            if (existingMemberId != null) {
+                // If another session is actively in the room with this name right now:
+                if (isCurrentlyActive) {
+                    throw new RoomService.RoomException("A student named \"" + name + "\" is already in this room.");
+                }
+                // If the name belongs to a registered student account, only that account can rejoin:
+                if (existingStudentId != null) {
+                    if (student == null || student.id() != existingStudentId) {
+                        throw new RoomService.RoomException("A student named \"" + name + "\" is already registered in this room.");
+                    }
+                }
+            }
+
+            // Check if roll number is already used by another student with a different name:
+            if (!roll.equalsIgnoreCase(name)) {
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "SELECT id, display_name FROM room_members WHERE room_id = ? AND LOWER(roll_number) = LOWER(?) AND LOWER(display_name) <> LOWER(?)")) {
+                    ps.setLong(1, room.id());
+                    ps.setString(2, roll);
+                    ps.setString(3, name);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next()) {
+                            throw new RoomService.RoomException("Roll number \"" + roll + "\" is already in use by another student.");
+                        }
+                    }
+                }
+            }
+
+            if (existingMemberId != null) {
+                // Re-entering room! Update timestamp and clear left_at (same student can enter multiple times)
+                try (PreparedStatement update = conn.prepareStatement("""
+                        UPDATE room_members
+                        SET student_id = ?, roll_number = ?, display_name = ?, joined_at = CURRENT_TIMESTAMP, left_at = NULL
+                        WHERE id = ?""")) {
+                    if (student == null || student.id() == 0) {
+                        update.setNull(1, Types.BIGINT);
+                    } else {
+                        update.setLong(1, student.id());
+                    }
+                    update.setString(2, roll);
+                    update.setString(3, name);
+                    update.setLong(4, existingMemberId);
+                    update.executeUpdate();
+                }
+            } else {
+                // Fresh join
+                try (PreparedStatement insert = conn.prepareStatement("""
+                        INSERT INTO room_members (room_id, student_id, roll_number, display_name, joined_at, left_at)
+                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, NULL)""")) {
+                    insert.setLong(1, room.id());
+                    if (student == null || student.id() == 0) {
+                        insert.setNull(2, Types.BIGINT);
+                    } else {
+                        insert.setLong(2, student.id());
+                    }
+                    insert.setString(3, roll);
+                    insert.setString(4, name);
+                    insert.executeUpdate();
+                }
             }
             // Remember who joined, so foreground-app flags carry the same roll number/name as the roster.
-            SessionIdentity.remember(room.id(), roll, displayName);
+            SessionIdentity.remember(room.id(), roll, name);
             return room;
         } catch (SQLException e) {
             if (isUniqueViolation(e)) {
-                throw new RoomService.RoomException("That roll number has already joined this room.");
+                throw new RoomService.RoomException("A student named \"" + name + "\" is already in this room.");
             }
             throw new DataAccessException("Could not join room", e);
         }
@@ -178,31 +258,43 @@ public class StudentRoomService {
         }
     }
 
-    private static String validateRoll(String rollNumber) throws RoomService.RoomException {
-        String value = rollNumber == null ? "" : rollNumber.strip();
-        if (value.isEmpty()) {
-            throw new RoomService.RoomException("Enter your roll number.");
+    /**
+     * Marks the student (identified by what they joined THIS room as, via SessionIdentity) as
+     * having left: their roster row gets a left_at timestamp instead of being deleted, so the
+     * teacher's roster can show they left, and the same roll number/name can rejoin later.
+     * Safe to call even if they never actually joined (does nothing).
+     */
+    public void leave(long roomId) {
+        SessionIdentity.Identity who = SessionIdentity.recall(roomId);
+        if (who == null || (who.displayName() == null && who.rollNumber() == null)) {
+            return;
         }
-        if (value.length() > 64) {
-            throw new RoomService.RoomException("Roll number must be at most 64 characters.");
+        try (Connection conn = Database.connect();
+             PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE room_members SET left_at = ? WHERE room_id = ? AND (LOWER(display_name) = LOWER(?) OR LOWER(roll_number) = LOWER(?)) AND left_at IS NULL")) {
+            ps.setLong(1, System.currentTimeMillis());
+            ps.setLong(2, roomId);
+            ps.setString(3, who.displayName() != null ? who.displayName() : "");
+            ps.setString(4, who.rollNumber() != null ? who.rollNumber() : "");
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            System.err.println("[StudentRoomService] Could not record that the student left: " + e.getMessage());
         }
-        if (!ROLL.matcher(value).matches()) {
-            throw new RoomService.RoomException(
-                    "Roll number may use letters, digits, '.', '_', '/' or '-'.");
-        }
-        // Normalize so the unique index on (room_id, roll_number) is case-insensitive.
-        return value.toUpperCase(java.util.Locale.ROOT);
     }
 
-    private static boolean rollTaken(Connection conn, long roomId, String roll) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT 1 FROM room_members WHERE room_id = ? AND roll_number = ?")) {
-            ps.setLong(1, roomId);
-            ps.setString(2, roll);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
-            }
+    private static String validateRoll(String rollNumber, String fallbackName) {
+        String value = rollNumber == null ? "" : rollNumber.strip();
+        if (value.isEmpty()) {
+            value = fallbackName != null ? fallbackName.strip() : "";
         }
+        if (value.length() > 64) {
+            value = value.substring(0, 64);
+        }
+        return value;
+    }
+
+    private static String validateRoll(String rollNumber) throws RoomService.RoomException {
+        return validateRoll(rollNumber, "");
     }
 
     private static boolean isUniqueViolation(SQLException e) {

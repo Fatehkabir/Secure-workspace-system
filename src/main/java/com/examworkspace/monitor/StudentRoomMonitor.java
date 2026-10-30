@@ -14,7 +14,28 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
-
+/**
+ * The foreground-app check for a student who is inside a room -- ported from the
+ * examworkspace-final project's {@code StudentMonitorView}, with the same rules:
+ *
+ * <ul>
+ *   <li>An app the teacher allowed for THIS room is fine (matched by exe name, path,
+ *       app name or window title -- see {@link AllowedApp}).</li>
+ *   <li>This workspace app itself, and routine Windows shell UI, are always fine.</li>
+ *   <li>Anything else, once it has stayed in the foreground for {@link #GRACE_MS}, is
+ *       flagged: a row is written for the teacher's Live Monitor (see {@link ViolationStore}).
+ *       Going back to an allowed app before that resets the timer and nothing happens.</li>
+ * </ul>
+ *
+ * <p>The room's allowed list is re-read every {@link #REFRESH_SECONDS} seconds, so apps the
+ * teacher adds or removes mid-exam take effect almost immediately. Just before flagging, the
+ * list is read once more and the app re-checked, so an app the teacher allowed a moment ago
+ * is never flagged.
+ *
+ * <p>This class has no UI. It reports through two callbacks (the caller decides how to show
+ * them): a warning when an unapproved app first appears, and a notice once a flag is recorded.
+ * Requires Windows; elsewhere {@link #start()} just logs that the check is unavailable.
+ */
 public final class StudentRoomMonitor {
 
     private static final long GRACE_MS = 3000;
@@ -104,7 +125,7 @@ public final class StudentRoomMonitor {
                 t.setDaemon(true);
                 return t;
             });
-            refresher.scheduleAtFixedRate(this::refreshAllowed, REFRESH_SECONDS, REFRESH_SECONDS, TimeUnit.SECONDS);
+            refresher.scheduleWithFixedDelay(this::refreshAllowed, 3, 3, TimeUnit.SECONDS);
             log("Foreground-app check started for room " + roomId + ".");
         }, "room-monitor-start");
         starter.setDaemon(true);
@@ -205,8 +226,10 @@ public final class StudentRoomMonitor {
                 String name = who != null && who.displayName() != null ? who.displayName() : fallbackName;
                 String roll = who != null ? who.rollNumber() : null;
 
-                ViolationStore.record(roomId, studentId, roll, name, display, path);
-                log("Flag recorded for " + name + ": " + display);
+                String screenshot = ScreenshotCapture.captureBase64();
+                ViolationStore.record(roomId, studentId, roll, name, display, path, screenshot);
+                log("Flag recorded for " + name + ": " + display
+                        + (screenshot != null ? " (with screenshot)" : " (screenshot unavailable)"));
                 onFlagged.accept("Your teacher has been notified that you opened " + display + ".");
             } catch (Exception ex) {
                 log("Could not record the flag (" + ex.getMessage() + ") \u2014 will retry.");
@@ -258,14 +281,13 @@ public final class StudentRoomMonitor {
 
     private void refreshAllowed() {
         try {
-            List<AllowedApp> fresh = RoomLookup.loadAllowedApps(roomId);
-            List<String> names = RoomLookup.reloadAllowedProcessNames(roomId);
-            boolean changed = !fresh.equals(apps);
-            apps = List.copyOf(fresh);
-            roomInfo = new RoomLookup.RoomInfo(roomId, "", "", List.copyOf(names));
+            RoomLookup.AllowedSnapshot snapshot = RoomLookup.loadAllowedSnapshot(roomId);
+            boolean changed = !snapshot.apps().equals(apps);
+            apps = List.copyOf(snapshot.apps());
+            roomInfo = new RoomLookup.RoomInfo(roomId, "", "", List.copyOf(snapshot.processNames()));
             if (changed) {
-                log("Allowed list: " + (fresh.isEmpty() ? "(none)"
-                        : String.join(", ", fresh.stream().map(AllowedApp::describe).toList())));
+                log("Allowed list: " + (snapshot.apps().isEmpty() ? "(none)"
+                        : String.join(", ", snapshot.apps().stream().map(AllowedApp::describe).toList())));
             }
         } catch (Exception ignored) {
             // Keep the previous list if the database is briefly busy.

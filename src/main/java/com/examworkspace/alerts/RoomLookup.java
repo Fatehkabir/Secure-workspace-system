@@ -12,7 +12,28 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
-
+/**
+ * Read-only helper that finds a room by its room code and loads its allowed
+ * apps, for the Alerts Monitor to check incoming detections against.
+ *
+ * <p>Deliberately does not go through RoomService, since RoomService scopes
+ * everything to a logged-in Teacher and this tool is meant to be a standalone
+ * monitor you point at a room code — no login flow needed.
+ * Purely additive: only reads from the existing database via Database.connect(),
+ * never writes, and does not modify any existing class.
+ *
+ * <h3>How process-name matching works</h3>
+ * <ul>
+ *   <li>For {@code EXECUTABLE} entries the DB stores a full path like
+ *       {@code C:\…\Code.exe}.  We reduce it to the filename
+ *       ({@code code.exe}) for matching.</li>
+ *   <li>For {@code APP_ID} (Windows Store) entries the DB now also stores a
+ *       {@code process_name} column populated by {@code AppIdResolver} at
+ *       save-time.  That name is used directly.  Legacy rows where the column
+ *       is {@code NULL} still won't match — they were saved before this feature
+ *       existed; the teacher should remove and re-add those apps.</li>
+ * </ul>
+ */
 public final class RoomLookup {
 
     public record RoomInfo(long roomId, String name, String roomCode, List<String> allowedProcessNames) {
@@ -55,15 +76,50 @@ public final class RoomLookup {
         }
     }
 
+    public record AllowedSnapshot(List<AllowedApp> apps, List<String> processNames) {}
+
+    /** Loads both full app records and process names in a single fast database round-trip. */
+    public static AllowedSnapshot loadAllowedSnapshot(long roomId) throws SQLException {
+        List<AllowedApp> apps = new ArrayList<>();
+        List<String> processNames = new ArrayList<>();
+        try (Connection conn = Database.connect();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT name, launch_target, target_type, process_name FROM room_apps WHERE room_id = ?")) {
+            ps.setLong(1, roomId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String name = rs.getString("name");
+                    String launchTarget = rs.getString("launch_target");
+                    String targetType = rs.getString("target_type");
+                    String processName = rs.getString("process_name");
+
+                    apps.add(new AllowedApp(name, launchTarget, targetType, processName));
+
+                    if (processName != null && !processName.isBlank()) {
+                        String clean = cleanExeName(processName);
+                        if (!clean.isEmpty() && !processNames.contains(clean)) {
+                            processNames.add(clean);
+                        }
+                    }
+                    if (launchTarget != null && !launchTarget.isBlank()) {
+                        String cleanTarget = cleanExeName(launchTarget);
+                        if (!cleanTarget.isEmpty() && !processNames.contains(cleanTarget)) {
+                            processNames.add(cleanTarget);
+                        }
+                    }
+                }
+            }
+        }
+        return new AllowedSnapshot(apps, processNames);
+    }
+
     /**
      * Reloads the allowed process-name list for an already-known room.
      * Used by the Alerts Monitor to refresh the list live after the teacher
      * adds or removes apps while monitoring is active.
      */
     public static List<String> reloadAllowedProcessNames(long roomId) throws SQLException {
-        try (Connection conn = Database.connect()) {
-            return loadAllowedProcessNames(conn, roomId);
-        }
+        return loadAllowedSnapshot(roomId).processNames();
     }
 
     /**

@@ -10,7 +10,14 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
-
+/**
+ * Polls the Windows foreground window once per second and reports the
+ * active process to a listener. Runs on its own background thread.
+ *
+ * Requires Windows -- {@code User32} calls only work there. On any other OS
+ * {@link #start()} will throw {@link UnsatisfiedLinkError}, which callers
+ * should catch and report as "monitoring unavailable on this OS".
+ */
 public class ForegroundMonitor {
 
     public record ActiveProcess(String processName, String executablePath, long pid, String windowTitle) {}

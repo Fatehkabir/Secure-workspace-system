@@ -197,11 +197,11 @@ public class RoomService {
 
     public List<RoomMember> listMembers(Room room) {
         String sql = """
-                SELECT m.id, m.room_id, m.student_id, m.roll_number, m.display_name, m.joined_at
+                SELECT m.id, m.room_id, m.student_id, m.roll_number, m.display_name, m.joined_at, m.left_at
                 FROM room_members m
                 JOIN rooms r ON r.id = m.room_id
-                WHERE m.room_id = ? AND r.teacher_id = ?
-                ORDER BY LOWER(m.roll_number)""";
+                WHERE m.room_id = ? AND r.teacher_id = ? AND m.left_at IS NULL
+                ORDER BY LOWER(m.display_name)""";
         try (Connection conn = Database.connect(); PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, room.id());
             ps.setLong(2, teacher.id());
@@ -213,13 +213,16 @@ public class RoomService {
                     Instant joinedAt = rs.getTimestamp("joined_at") == null
                             ? Instant.EPOCH
                             : rs.getTimestamp("joined_at").toInstant();
+                    long leftAtMillis = rs.getLong("left_at");
+                    Instant leftAt = rs.wasNull() ? null : Instant.ofEpochMilli(leftAtMillis);
                     members.add(new RoomMember(
                             rs.getLong("id"),
                             rs.getLong("room_id"),
                             studentRef,
                             rs.getString("roll_number"),
                             rs.getString("display_name"),
-                            joinedAt));
+                            joinedAt,
+                            leftAt));
                 }
             }
             return members;
