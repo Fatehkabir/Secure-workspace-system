@@ -44,10 +44,8 @@ public final class RoomLookup {
          */
         public boolean isAllowed(String processName) {
             if (processName == null) return false;
-            String normalized = processName.toLowerCase(Locale.ROOT).trim();
-            int sep = Math.max(normalized.lastIndexOf('\\'), normalized.lastIndexOf('/'));
-            String file = (sep >= 0 ? normalized.substring(sep + 1) : normalized).trim();
-            return allowedProcessNames.stream().anyMatch(a -> a.equalsIgnoreCase(normalized) || a.equalsIgnoreCase(file));
+            String normalized = processName.toLowerCase(Locale.ROOT);
+            return allowedProcessNames.stream().anyMatch(a -> a.equals(normalized));
         }
     }
 
@@ -76,50 +74,15 @@ public final class RoomLookup {
         }
     }
 
-    public record AllowedSnapshot(List<AllowedApp> apps, List<String> processNames) {}
-
-    /** Loads both full app records and process names in a single fast database round-trip. */
-    public static AllowedSnapshot loadAllowedSnapshot(long roomId) throws SQLException {
-        List<AllowedApp> apps = new ArrayList<>();
-        List<String> processNames = new ArrayList<>();
-        try (Connection conn = Database.connect();
-             PreparedStatement ps = conn.prepareStatement(
-                     "SELECT name, launch_target, target_type, process_name FROM room_apps WHERE room_id = ?")) {
-            ps.setLong(1, roomId);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    String name = rs.getString("name");
-                    String launchTarget = rs.getString("launch_target");
-                    String targetType = rs.getString("target_type");
-                    String processName = rs.getString("process_name");
-
-                    apps.add(new AllowedApp(name, launchTarget, targetType, processName));
-
-                    if (processName != null && !processName.isBlank()) {
-                        String clean = cleanExeName(processName);
-                        if (!clean.isEmpty() && !processNames.contains(clean)) {
-                            processNames.add(clean);
-                        }
-                    }
-                    if (launchTarget != null && !launchTarget.isBlank()) {
-                        String cleanTarget = cleanExeName(launchTarget);
-                        if (!cleanTarget.isEmpty() && !processNames.contains(cleanTarget)) {
-                            processNames.add(cleanTarget);
-                        }
-                    }
-                }
-            }
-        }
-        return new AllowedSnapshot(apps, processNames);
-    }
-
     /**
      * Reloads the allowed process-name list for an already-known room.
      * Used by the Alerts Monitor to refresh the list live after the teacher
      * adds or removes apps while monitoring is active.
      */
     public static List<String> reloadAllowedProcessNames(long roomId) throws SQLException {
-        return loadAllowedSnapshot(roomId).processNames();
+        try (Connection conn = Database.connect()) {
+            return loadAllowedProcessNames(conn, roomId);
+        }
     }
 
     /**
@@ -167,30 +130,24 @@ public final class RoomLookup {
                 while (rs.next()) {
                     String launchTarget = rs.getString("launch_target");
                     String targetType   = rs.getString("target_type");
-                    String processName  = rs.getString("process_name");
+                    String processName  = rs.getString("process_name");  // may be NULL for legacy rows
 
-                    if (processName != null && !processName.isBlank()) {
-                        String clean = cleanExeName(processName);
-                        if (!clean.isEmpty() && !allowed.contains(clean)) {
-                            allowed.add(clean);
-                        }
-                    }
+                    if ("EXECUTABLE".equals(targetType) && launchTarget != null) {
+                        // Reduce full path → filename (e.g. "C:\…\Code.exe" → "code.exe")
+                        String fileName = launchTarget.substring(launchTarget.lastIndexOf('\\') + 1);
+                        allowed.add(fileName.toLowerCase(Locale.ROOT));
 
-                    if (launchTarget != null && !launchTarget.isBlank()) {
-                        String cleanTarget = cleanExeName(launchTarget);
-                        if (!cleanTarget.isEmpty() && !allowed.contains(cleanTarget)) {
-                            allowed.add(cleanTarget);
+                    } else if ("APP_ID".equals(targetType)) {
+                        if (processName != null && !processName.isBlank()) {
+                            // Use the resolved .exe name stored at add-time (e.g. "calculator.exe")
+                            allowed.add(processName.toLowerCase(Locale.ROOT));
                         }
+                        // If processName is NULL the app was added before this feature existed.
+                        // The teacher should remove and re-add it to populate the column.
                     }
                 }
             }
         }
         return allowed;
-    }
-
-    private static String cleanExeName(String raw) {
-        if (raw == null || raw.isBlank()) return "";
-        int sep = Math.max(raw.lastIndexOf('\\'), raw.lastIndexOf('/'));
-        return (sep >= 0 ? raw.substring(sep + 1) : raw).trim().toLowerCase(Locale.ROOT);
     }
 }
