@@ -30,15 +30,22 @@ public final class PasswordHasher {
     }
 
     public static boolean verify(char[] password, String stored) {
+        if (stored == null || stored.isBlank()) {
+            return false;
+        }
         String[] parts = stored.split(":");
         if (parts.length != 3) {
             return false;
         }
-        int iterations = Integer.parseInt(parts[0]);
-        Base64.Decoder b64 = Base64.getDecoder();
-        byte[] salt = b64.decode(parts[1]);
-        byte[] expected = b64.decode(parts[2]);
-        return MessageDigest.isEqual(expected, derive(password, salt, iterations));
+        try {
+            int iterations = Integer.parseInt(parts[0]);
+            Base64.Decoder b64 = Base64.getDecoder();
+            byte[] salt = b64.decode(parts[1]);
+            byte[] expected = b64.decode(parts[2]);
+            return MessageDigest.isEqual(expected, derive(password, salt, iterations));
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     private static byte[] derive(char[] password, byte[] salt, int iterations) {

@@ -21,15 +21,27 @@ public class StudentEntryView extends HBox {
         Label title = new Label("Join an exam");
         title.getStyleClass().add("form-title");
         Label subtitle = new Label(
-                "Continue as a guest, or sign in with a student account. You will enter your roll number when joining a room.");
+                "Continue as a guest with your name, or sign in with a student account.");
         subtitle.getStyleClass().add("form-subtitle");
         subtitle.setWrapText(true);
+
+        javafx.scene.control.TextField guestName = new javafx.scene.control.TextField();
+        guestName.setPromptText("Your name / username");
 
         Button guest = new Button("Continue as guest");
         guest.setMaxWidth(Double.MAX_VALUE);
         guest.getStyleClass().addAll("pink", "lg");
         Motion.press(guest);
-        guest.setOnAction(e -> app.showStudentDashboard(null));
+        guest.setOnAction(e -> {
+            String name = guestName.getText() == null ? "" : guestName.getText().strip();
+            if (name.isEmpty()) {
+                app.showStudentDashboard(null);
+            } else {
+                app.showStudentDashboard(new com.examworkspace.model.Student(0L, name, name));
+            }
+        });
+
+        VBox guestBox = new VBox(8, Ui.field("Name / Username", guestName), guest);
 
         Label or = new Label("OR");
         or.getStyleClass().add("or-label");
@@ -60,13 +72,22 @@ public class StudentEntryView extends HBox {
         footer.setAlignment(Pos.CENTER);
         footer.getStyleClass().add("form-footer");
 
+        Hyperlink serverLink = new Hyperlink("Server: " + com.examworkspace.db.Database.getServerDisplayName());
+        serverLink.setStyle("-fx-font-size: 11px; -fx-text-fill: #94a3b8;");
+        serverLink.setOnAction(e -> ServerConfigDialog.show(this, () -> {
+            serverLink.setText("Server: " + com.examworkspace.db.Database.getServerDisplayName());
+        }));
+        HBox serverFooter = new HBox(serverLink);
+        serverFooter.setAlignment(Pos.CENTER);
+
         VBox form = new VBox(18,
                 new VBox(6, kicker, title, subtitle),
-                guest,
+                guestBox,
                 divider,
                 signIn,
                 create,
-                footer);
+                footer,
+                serverFooter);
         AuthLayout.fill(this, form);
     }
 }
