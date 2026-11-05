@@ -38,11 +38,17 @@ public class ExamWorkspaceApp extends Application {
 
     @Override
     public void start(Stage stage) {
-        Database.initialize();
+        try {
+            Database.initialize();
+            com.examworkspace.monitor.OfflineViolationQueue.startWorker();
+        } catch (Exception ex) {
+            System.err.println("Database initial connection warning: " + ex.getMessage());
+        }
 
         // Covers the window being closed outright (the X button) while a student is in a room --
         // navigating to another screen is already handled by StudentRoomView's own scene listener.
         stage.setOnCloseRequest(e -> {
+            com.examworkspace.net.LanDiscoveryService.stopBeacon();
             if (currentView instanceof Leavable leavable) {
                 leavable.leaveRoom();
             }

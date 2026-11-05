@@ -32,7 +32,7 @@ public class StudentRoomService {
         Instant now = Instant.now();
         String sql = """
                 SELECT r.id, r.name, r.room_code, r.starts_at, r.ends_at,
-                       COUNT(a.id) AS app_count
+                        COUNT(a.id) AS app_count
                 FROM rooms r LEFT JOIN room_apps a ON a.room_id = r.id
                 GROUP BY r.id, r.name, r.room_code, r.starts_at, r.ends_at
                 ORDER BY r.starts_at, LOWER(r.name)""";
@@ -65,7 +65,7 @@ public class StudentRoomService {
         Instant now = Instant.now();
         String sql = """
                 SELECT a.room_id, a.id, a.name, a.launch_target, a.target_type,
-                       r.starts_at, r.ends_at
+                        r.starts_at, r.ends_at
                 FROM room_apps a JOIN rooms r ON r.id = a.room_id
                 ORDER BY LOWER(a.name)""";
         try (Connection conn = Database.connect();
@@ -115,7 +115,7 @@ public class StudentRoomService {
 
         String sql = """
                 SELECT r.id, r.teacher_id, r.name, r.room_code, r.room_password, r.starts_at, r.ends_at,
-                       COUNT(a.id) AS app_count
+                        COUNT(a.id) AS app_count
                 FROM rooms r LEFT JOIN room_apps a ON a.room_id = r.id
                 WHERE r.id = ?
                 GROUP BY r.id, r.teacher_id, r.name, r.room_code, r.room_password, r.starts_at, r.ends_at""";
@@ -142,17 +142,15 @@ public class StudentRoomService {
             if (status == RoomStatus.ENDED) {
                 throw new RoomService.RoomException("This room has ended and can no longer be joined.");
             }
-            if (!room.roomPassword().equals(entered)) {
+            if (!RoomService.verifyRoomPassword(entered, room.roomPassword())) {
                 throw new RoomService.RoomException("Incorrect room password.");
             }
 
-            // A single student can enter multiple times, but no two or more students can have the same name.
-            // Check if there is an existing member row in this room with this name.
             Long existingMemberId = null;
             Long existingStudentId = null;
             boolean isCurrentlyActive = false;
             try (PreparedStatement ps = conn.prepareStatement(
-                    "SELECT id, student_id, left_at FROM room_members WHERE room_id = ? AND LOWER(display_name) = LOWER(?)")) {
+                    "SELECT id, student_id, left_at, last_seen_at FROM room_members WHERE room_id = ? AND LOWER(display_name) = LOWER(?)")) {
                 ps.setLong(1, room.id());
                 ps.setString(2, name);
                 try (ResultSet rs = ps.executeQuery()) {
@@ -161,17 +159,18 @@ public class StudentRoomService {
                         long sid = rs.getLong("student_id");
                         existingStudentId = rs.wasNull() ? null : sid;
                         rs.getLong("left_at");
-                        isCurrentlyActive = rs.wasNull();
+                        boolean hasLeft = !rs.wasNull();
+                        long lastSeen = rs.getLong("last_seen_at");
+                        boolean hasRecentHeartbeat = !rs.wasNull() && (System.currentTimeMillis() - lastSeen < 8000);
+                        isCurrentlyActive = !hasLeft && hasRecentHeartbeat;
                     }
                 }
             }
 
             if (existingMemberId != null) {
-                // If another session is actively in the room with this name right now:
                 if (isCurrentlyActive) {
                     throw new RoomService.RoomException("A student named \"" + name + "\" is already in this room.");
                 }
-                // If the name belongs to a registered student account, only that account can rejoin:
                 if (existingStudentId != null) {
                     if (student == null || student.id() != existingStudentId) {
                         throw new RoomService.RoomException("A student named \"" + name + "\" is already registered in this room.");
@@ -179,7 +178,6 @@ public class StudentRoomService {
                 }
             }
 
-            // Check if roll number is already used by another student with a different name:
             if (!roll.equalsIgnoreCase(name)) {
                 try (PreparedStatement ps = conn.prepareStatement(
                         "SELECT id, display_name FROM room_members WHERE room_id = ? AND LOWER(roll_number) = LOWER(?) AND LOWER(display_name) <> LOWER(?)")) {
@@ -194,11 +192,11 @@ public class StudentRoomService {
                 }
             }
 
+            long now = System.currentTimeMillis();
             if (existingMemberId != null) {
-                // Re-entering room! Update timestamp and clear left_at (same student can enter multiple times)
                 try (PreparedStatement update = conn.prepareStatement("""
                         UPDATE room_members
-                        SET student_id = ?, roll_number = ?, display_name = ?, joined_at = CURRENT_TIMESTAMP, left_at = NULL
+                        SET student_id = ?, roll_number = ?, display_name = ?, joined_at = CURRENT_TIMESTAMP, left_at = NULL, last_seen_at = ?
                         WHERE id = ?""")) {
                     if (student == null || student.id() == 0) {
                         update.setNull(1, Types.BIGINT);
@@ -207,14 +205,14 @@ public class StudentRoomService {
                     }
                     update.setString(2, roll);
                     update.setString(3, name);
-                    update.setLong(4, existingMemberId);
+                    update.setLong(4, now);
+                    update.setLong(5, existingMemberId);
                     update.executeUpdate();
                 }
             } else {
-                // Fresh join
                 try (PreparedStatement insert = conn.prepareStatement("""
-                        INSERT INTO room_members (room_id, student_id, roll_number, display_name, joined_at, left_at)
-                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, NULL)""")) {
+                        INSERT INTO room_members (room_id, student_id, roll_number, display_name, joined_at, left_at, last_seen_at)
+                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, NULL, ?)""")) {
                     insert.setLong(1, room.id());
                     if (student == null || student.id() == 0) {
                         insert.setNull(2, Types.BIGINT);
@@ -223,10 +221,10 @@ public class StudentRoomService {
                     }
                     insert.setString(3, roll);
                     insert.setString(4, name);
+                    insert.setLong(5, now);
                     insert.executeUpdate();
                 }
             }
-            // Remember who joined, so foreground-app flags carry the same roll number/name as the roster.
             SessionIdentity.remember(room.id(), roll, name);
             return room;
         } catch (SQLException e) {
@@ -258,12 +256,6 @@ public class StudentRoomService {
         }
     }
 
-    /**
-     * Marks the student (identified by what they joined THIS room as, via SessionIdentity) as
-     * having left: their roster row gets a left_at timestamp instead of being deleted, so the
-     * teacher's roster can show they left, and the same roll number/name can rejoin later.
-     * Safe to call even if they never actually joined (does nothing).
-     */
     public void leave(long roomId) {
         SessionIdentity.Identity who = SessionIdentity.recall(roomId);
         if (who == null || (who.displayName() == null && who.rollNumber() == null)) {
@@ -279,6 +271,21 @@ public class StudentRoomService {
             ps.executeUpdate();
         } catch (SQLException e) {
             System.err.println("[StudentRoomService] Could not record that the student left: " + e.getMessage());
+        }
+    }
+
+    public void heartbeat(long roomId, String displayName) {
+        if (displayName == null || displayName.isBlank()) {
+            return;
+        }
+        try (Connection conn = Database.connect();
+             PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE room_members SET last_seen_at = ? WHERE room_id = ? AND LOWER(display_name) = LOWER(?) AND left_at IS NULL")) {
+            ps.setLong(1, System.currentTimeMillis());
+            ps.setLong(2, roomId);
+            ps.setString(3, displayName);
+            ps.executeUpdate();
+        } catch (SQLException ignored) {
         }
     }
 
@@ -302,3 +309,4 @@ public class StudentRoomService {
         return "23505".equals(state);
     }
 }
+

@@ -111,8 +111,8 @@ public class StudentDashboardView extends BorderPane {
         roomScroll.getStyleClass().addAll("edge-to-edge", "side-scroll");
         VBox.setVgrow(roomScroll, Priority.ALWAYS);
 
-        String displayName = student != null ? student.fullName() : "Guest student";
-        String handleText = student != null ? "@" + student.username() : "Guest session";
+        String displayName = (student != null && !student.fullName().isBlank()) ? student.fullName() : "Guest";
+        String handleText = (student != null && !student.username().isBlank()) ? "@" + student.username() : "";
         Ui.Avatar avatar = new Ui.Avatar(36);
         avatar.setName(displayName);
         Label name = new Label(displayName);
@@ -187,7 +187,7 @@ public class StudentDashboardView extends BorderPane {
             apps.clear();
             apps.putAll(rooms.appsByRoom());
         } catch (RuntimeException ex) {
-            Ui.showError(this, "Could not load rooms", ex);
+            System.err.println("[StudentDashboardView] Failed to reload rooms: " + ex.getMessage());
             return;
         }
         if (selectedId != null && loaded.stream().noneMatch(room -> room.id() == selectedId)) {
@@ -361,12 +361,12 @@ public class StudentDashboardView extends BorderPane {
     }
 
     private void joinRoom(JoinableRoom room) {
-        Room joined = StudentJoinDialog.ask(this, rooms, room, student);
-        if (joined == null) {
+        StudentJoinDialog.JoinResult result = StudentJoinDialog.ask(this, rooms, room, student);
+        if (result == null) {
             return;
         }
-        Ui.toast(this, "Joined " + joined.name(), true);
-        app.showStudentRoom(joined, student);
+        Ui.toast(this, "Joined " + result.room().name(), true);
+        app.showStudentRoom(result.room(), result.student());
     }
 
     private void select(long id) {

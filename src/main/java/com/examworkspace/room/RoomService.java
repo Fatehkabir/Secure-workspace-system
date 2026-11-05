@@ -40,6 +40,17 @@ public class RoomService {
         this.teacher = teacher;
     }
 
+    public static String hashRoomPassword(String password) {
+        return password == null ? "" : password;
+    }
+
+    public static boolean verifyRoomPassword(String candidate, String storedPlain) {
+        if (candidate == null || storedPlain == null || storedPlain.isBlank()) {
+            return false;
+        }
+        return candidate.equals(storedPlain);
+    }
+
     public List<Room> listRooms() {
         String sql = """
                 SELECT r.id, r.teacher_id, r.name, r.room_code, r.room_password, r.starts_at, r.ends_at,
@@ -159,10 +170,6 @@ public class RoomService {
         }
     }
 
-    /**
-     * @param previousStart the room's current start, so a live room can keep a start that is
-     *                      already in the past. Any newly chosen time must be in the future.
-     */
     public void updateSchedule(Room room, Instant start, Instant end) throws RoomException {
         validateSchedule(start, end, room.startsAt());
         try (Connection conn = Database.connect();
@@ -196,48 +203,54 @@ public class RoomService {
     }
 
     public List<RoomMember> listMembers(Room room) {
-        String sql = """
-                SELECT m.id, m.room_id, m.student_id, m.roll_number, m.display_name, m.joined_at, m.left_at
-                FROM room_members m
-                JOIN rooms r ON r.id = m.room_id
-                WHERE m.room_id = ? AND r.teacher_id = ? AND m.left_at IS NULL
-                ORDER BY LOWER(m.display_name)""";
-        try (Connection conn = Database.connect(); PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setLong(1, room.id());
-            ps.setLong(2, teacher.id());
-            List<RoomMember> members = new ArrayList<>();
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    long studentId = rs.getLong("student_id");
-                    Long studentRef = rs.wasNull() ? null : studentId;
-                    Instant joinedAt = rs.getTimestamp("joined_at") == null
-                            ? Instant.EPOCH
-                            : rs.getTimestamp("joined_at").toInstant();
-                    long leftAtMillis = rs.getLong("left_at");
-                    Instant leftAt = rs.wasNull() ? null : Instant.ofEpochMilli(leftAtMillis);
-                    members.add(new RoomMember(
-                            rs.getLong("id"),
-                            rs.getLong("room_id"),
-                            studentRef,
-                            rs.getString("roll_number"),
-                            rs.getString("display_name"),
-                            joinedAt,
-                            leftAt));
-                }
+        long timeoutThreshold = System.currentTimeMillis() - 8000;
+        try (Connection conn = Database.connect()) {
+            try (PreparedStatement autoLeave = conn.prepareStatement(
+                    "UPDATE room_members SET left_at = COALESCE(last_seen_at, ?) WHERE room_id = ? AND left_at IS NULL AND (last_seen_at IS NULL OR last_seen_at < ?)")) {
+                autoLeave.setLong(1, timeoutThreshold);
+                autoLeave.setLong(2, room.id());
+                autoLeave.setLong(3, timeoutThreshold);
+                autoLeave.executeUpdate();
+            } catch (SQLException ignored) {
             }
-            return members;
+
+            String sql = """
+                    SELECT m.id, m.room_id, m.student_id, m.roll_number, m.display_name, m.joined_at, m.left_at
+                    FROM room_members m
+                    JOIN rooms r ON r.id = m.room_id
+                    WHERE m.room_id = ? AND r.teacher_id = ? AND m.left_at IS NULL
+                    ORDER BY LOWER(m.display_name)""";
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setLong(1, room.id());
+                ps.setLong(2, teacher.id());
+                List<RoomMember> members = new ArrayList<>();
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        long studentId = rs.getLong("student_id");
+                        Long studentRef = rs.wasNull() ? null : studentId;
+                        Instant joinedAt = rs.getTimestamp("joined_at") == null
+                                ? Instant.EPOCH
+                                : rs.getTimestamp("joined_at").toInstant();
+                        long leftAtMillis = rs.getLong("left_at");
+                        Instant leftAt = rs.wasNull() ? null : Instant.ofEpochMilli(leftAtMillis);
+                        members.add(new RoomMember(
+                                rs.getLong("id"),
+                                rs.getLong("room_id"),
+                                studentRef,
+                                rs.getString("roll_number"),
+                                rs.getString("display_name"),
+                                joinedAt,
+                                leftAt));
+                    }
+                }
+                return members;
+            }
         } catch (SQLException e) {
             throw new DataAccessException("Could not load room members", e);
         }
     }
 
-    /**
-     * Adds apps to the room, silently skipping any that are already in it.
-     *
-     * @return number of apps actually added
-     */
     public int addApps(Room room, List<AppEntry> apps) {
-        // Resolve process names for APP_ID entries that don't already have one.
         List<String> appIds = apps.stream()
                 .filter(a -> a.targetType() == AppEntry.TargetType.APP_ID && a.processName() == null)
                 .map(AppEntry::launchTarget)
@@ -251,18 +264,17 @@ public class RoomService {
                   AND NOT EXISTS (SELECT 1 FROM room_apps WHERE room_id = r.id AND launch_target = ?)""";
         try (Connection conn = Database.connect(); PreparedStatement ps = conn.prepareStatement(sql)) {
             for (AppEntry app : apps) {
-                // Determine process name: use existing value, or resolved for APP_ID, or derive from path.
                 String procName = app.processName();
                 if (procName == null && app.targetType() == AppEntry.TargetType.APP_ID) {
                     procName = resolved.get(app.launchTarget().toLowerCase(Locale.ROOT));
                 }
                 if (procName == null) {
-                    procName = app.resolvedProcessName(); // derives from EXECUTABLE path
+                    procName = app.resolvedProcessName();
                 }
                 ps.setString(1, app.name());
                 ps.setString(2, app.launchTarget());
                 ps.setString(3, app.targetType().name());
-                ps.setString(4, procName); // may be null for unresolvable APP_ID entries
+                ps.setString(4, procName);
                 ps.setLong(5, room.id());
                 ps.setLong(6, teacher.id());
                 ps.setString(7, app.launchTarget());
@@ -383,10 +395,6 @@ public class RoomService {
         return value;
     }
 
-    /**
-     * @param keepStart when editing, the start currently saved on the room. It may stay even if it
-     *                  is already in the past. Every other chosen time has to be in the future.
-     */
     private static void validateSchedule(Instant start, Instant end, Instant keepStart) throws RoomException {
         if (start == null || end == null) {
             throw new RoomException("Choose both a start and an end.");

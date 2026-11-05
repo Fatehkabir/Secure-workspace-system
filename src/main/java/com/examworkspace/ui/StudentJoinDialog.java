@@ -17,19 +17,31 @@ import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.VBox;
 
-/** Asks for roll number and room password so a student can join a selected exam room. */
+/** Asks for username/name, optional roll number, and room password so a student can join an exam room. */
 final class StudentJoinDialog {
+
+    public record JoinResult(Room room, Student student) {}
 
     private StudentJoinDialog() {
     }
 
-    static Room ask(Node owner, StudentRoomService rooms, JoinableRoom selected, Student student) {
+    static JoinResult ask(Node owner, StudentRoomService rooms, JoinableRoom selected, Student student) {
+        TextField nameField = new TextField();
+        nameField.setPromptText("Your name or username");
+        boolean isRegisteredAccount = student != null && student.id() > 0;
+        if (student != null && !student.fullName().isBlank()) {
+            nameField.setText(student.fullName());
+            if (isRegisteredAccount) {
+                nameField.setDisable(true);
+            }
+        }
+
         TextField roll = new TextField();
-        roll.setPromptText("e.g. 2024-CS-042");
+        roll.setPromptText("Optional (defaults to your name)");
         PasswordField password = new PasswordField();
         password.setPromptText("Room password from your teacher");
 
-        Dialog<Room> dialog = new Dialog<>();
+        Dialog<JoinResult> dialog = new Dialog<>();
         dialog.initOwner(Ui.windowOf(owner));
         dialog.setTitle("Join room");
         dialog.setResizable(false);
@@ -38,8 +50,8 @@ final class StudentJoinDialog {
 
         Label heading = new Label("Join " + selected.name());
         heading.getStyleClass().add("dialog-title");
-        Label body = new Label("Enter your roll number and the password for room "
-                + selected.roomCode() + ". Your teacher will see this roll on the roster.");
+        Label body = new Label("Enter your name/username and the password for room "
+                + selected.roomCode() + ".");
         body.getStyleClass().add("dialog-message");
         body.setWrapText(true);
         body.setMaxWidth(420);
@@ -52,7 +64,10 @@ final class StudentJoinDialog {
 
         VBox content = new VBox(16,
                 new VBox(6, heading, body),
-                new VBox(14, Ui.field("Roll number", roll), Ui.field("Room password", password)),
+                new VBox(14,
+                        Ui.field("Your Name / Username", nameField),
+                        Ui.field("Roll number (optional)", roll),
+                        Ui.field("Room password", password)),
                 error);
         content.getStyleClass().add("dialog-content");
         content.setAlignment(Pos.CENTER_LEFT);
@@ -63,16 +78,34 @@ final class StudentJoinDialog {
         Button confirmButton = (Button) dialog.getDialogPane().lookupButton(confirm);
         confirmButton.getStyleClass().add("primary");
 
-        final Room[] value = new Room[1];
+        final JoinResult[] value = new JoinResult[1];
         confirmButton.addEventFilter(ActionEvent.ACTION, event -> {
+            String enteredName = nameField.getText() == null ? "" : nameField.getText().strip();
+            if (enteredName.isEmpty()) {
+                error.setText("Enter your name / username.");
+                error.setVisible(true);
+                nameField.requestFocus();
+                event.consume();
+                return;
+            }
+            String enteredRoll = roll.getText() == null ? "" : roll.getText().strip();
+            if (enteredRoll.isEmpty()) {
+                enteredRoll = enteredName;
+            }
             try {
-                value[0] = rooms.join(selected.id(), password.getText(), roll.getText(), student);
+                Student activeStudent = isRegisteredAccount
+                        ? student
+                        : new Student(0L, enteredName, enteredName);
+                Room joined = rooms.join(selected.id(), password.getText(), enteredRoll, enteredName, activeStudent);
+                value[0] = new JoinResult(joined, activeStudent);
                 error.setVisible(false);
             } catch (RoomService.RoomException ex) {
                 error.setText(ex.getMessage());
                 error.setVisible(true);
                 password.clear();
-                if (ex.getMessage() != null && ex.getMessage().toLowerCase().contains("roll")) {
+                if (ex.getMessage() != null && ex.getMessage().toLowerCase().contains("name")) {
+                    nameField.requestFocus();
+                } else if (ex.getMessage() != null && ex.getMessage().toLowerCase().contains("roll")) {
                     roll.requestFocus();
                 } else {
                     password.requestFocus();
