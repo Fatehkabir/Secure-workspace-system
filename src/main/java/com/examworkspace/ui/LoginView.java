@@ -74,6 +74,14 @@ public class LoginView extends HBox {
         studentFooter.setAlignment(Pos.CENTER);
         studentFooter.getStyleClass().add("form-footer");
 
+        Hyperlink serverLink = new Hyperlink("Server: " + com.examworkspace.db.Database.getServerDisplayName());
+        serverLink.setStyle("-fx-font-size: 11px; -fx-text-fill: #94a3b8;");
+        serverLink.setOnAction(e -> ServerConfigDialog.show(this, () -> {
+            serverLink.setText("Server: " + com.examworkspace.db.Database.getServerDisplayName());
+        }));
+        HBox serverFooter = new HBox(serverLink);
+        serverFooter.setAlignment(Pos.CENTER);
+
         signIn.setOnAction(e -> {
             banner.setVisible(false);
             signIn.setDisable(true);
@@ -99,7 +107,8 @@ public class LoginView extends HBox {
                 divider,
                 google,
                 footer,
-                studentFooter);
+                studentFooter,
+                serverFooter);
         AuthLayout.fill(this, form);
         Platform.runLater(username::requestFocus);
     }
