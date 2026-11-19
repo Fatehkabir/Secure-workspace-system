@@ -1,5 +1,6 @@
 package com.examworkspace.ui;
 
+import com.examworkspace.room.RoomService;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.concurrent.Callable;
@@ -54,8 +55,6 @@ final class Ui {
         thread.start();
     }
 
-    // ---------- small building blocks ----------
-
     static Region spacer() {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
@@ -91,7 +90,6 @@ final class Ui {
         return field;
     }
 
-    /** A hidden error banner. Call {@link #showBanner} to reveal it with a message. */
     static HBox banner(Label message) {
         message.setWrapText(true);
         HBox banner = new HBox(8, Icons.of(Icons.WARNING, 16, "icon-danger"), message);
@@ -131,7 +129,6 @@ final class Ui {
         return box;
     }
 
-    /** True when {@code target} is {@code ancestor} or sits inside it. */
     static boolean isWithin(EventTarget target, Node ancestor) {
         Node node = target instanceof Node n ? n : null;
         while (node != null) {
@@ -142,8 +139,6 @@ final class Ui {
         }
         return false;
     }
-
-    // ---------- toasts ----------
 
     static void toast(Node owner, String message, boolean success) {
         Scene scene = owner.getScene();
@@ -178,8 +173,6 @@ final class Ui {
         animation.play();
     }
 
-    // ---------- dialogs ----------
-
     static void showError(Node owner, String title, Throwable error) {
         String message = error.getMessage() == null ? error.toString() : error.getMessage();
         if (error.getCause() != null && error.getCause().getMessage() != null) {
@@ -201,6 +194,45 @@ final class Ui {
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.CANCEL, confirm);
         ((Button) dialog.getDialogPane().lookupButton(confirm)).getStyleClass().add("danger-solid");
         return dialog.showAndWait().filter(confirm::equals).isPresent();
+    }
+
+    static <T> T confirm(Node owner, String title, String confirmText, String message, VBox fields,
+                         RoomDialogs.Attempt<T> read) {
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.initOwner(windowOf(owner));
+        dialog.setTitle(title);
+        dialog.setResizable(false);
+
+        DialogPane pane = dialog.getDialogPane();
+        Theme.applyTo(pane);
+        pane.setHeaderText(null);
+
+        Label heading = new Label(title);
+        heading.getStyleClass().add("dialog-title");
+        Label body = new Label(message);
+        body.getStyleClass().add("dialog-message");
+        body.setWrapText(true);
+        body.setMaxWidth(380);
+
+        VBox content = new VBox(16, new VBox(6, heading, body), fields);
+        content.getStyleClass().add("dialog-content");
+        pane.setContent(content);
+
+        ButtonType confirm = new ButtonType(confirmText, ButtonBar.ButtonData.OK_DONE);
+        pane.getButtonTypes().addAll(ButtonType.CANCEL, confirm);
+        Button confirmButton = (Button) pane.lookupButton(confirm);
+        confirmButton.getStyleClass().add("primary");
+
+        Optional<ButtonType> result = dialog.showAndWait();
+        if (result.isPresent() && result.get() == confirm) {
+            try {
+                return read.run();
+            } catch (RoomService.RoomException ex) {
+                showError(owner, title, ex.getMessage());
+                return null;
+            }
+        }
+        return null;
     }
 
     static Optional<String> promptName(Node owner, String title, String message, String initial,
@@ -276,9 +308,6 @@ final class Ui {
         return node.getScene() == null ? null : node.getScene().getWindow();
     }
 
-    // ---------- avatar ----------
-
-    /** Round tile showing a name's initials, tinted from a hash of the name. */
     static final class Avatar extends StackPane {
 
         private final Label label = new Label();

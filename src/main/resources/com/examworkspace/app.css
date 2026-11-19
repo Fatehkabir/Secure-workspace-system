@@ -310,6 +310,18 @@
     -fx-padding: 9 40 9 12;
 }
 
+/* Bug 4 fix: ensure password bullet dots are visible against dark background.
+   JavaFX renders the masking bullets using -fx-text-fill on .password-field
+   but the inner canvas also respects -fx-control-inner-background.
+   Setting both explicitly makes the dots clearly visible on dark backgrounds. */
+.password-field {
+    -fx-control-inner-background: transparent;
+}
+
+.password-field .text {
+    -fx-fill: -color-text;
+}
+
 .field-label {
     -fx-text-fill: -color-text-muted;
     -fx-font-size: 12.5px;
@@ -1339,4 +1351,32 @@
 
 .progress-indicator {
     -fx-progress-color: #3b6cff;
+}
+
+/* ── Website allowlist dialog (RoomView) ─────────────────────────────── */
+
+.url-policy-dialog .check-title {
+    -fx-font-weight: bold;
+    -fx-font-size: 13px;
+    -fx-text-fill: white;
+}
+
+.mono-area {
+    -fx-font-family: "Consolas", "Courier New", monospace;
+    -fx-font-size: 12.5px;
+}
+
+.url-summary {
+    -fx-text-fill: rgba(255, 255, 255, 0.66);
+    -fx-font-size: 12px;
+    -fx-background-color: rgba(255, 255, 255, 0.06);
+    -fx-background-radius: 6;
+    -fx-padding: 8 10 8 10;
+}
+
+/* ── Live Monitor table (RoomMonitorPanel) ───────────────────────────── */
+
+.violation-table .column-header .label {
+    -fx-font-size: 11.5px;
+    -fx-text-fill: rgba(255, 255, 255, 0.75);
 }

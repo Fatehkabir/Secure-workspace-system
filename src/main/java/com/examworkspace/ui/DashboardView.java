@@ -2,10 +2,7 @@ package com.examworkspace.ui;
 
 import com.examworkspace.ExamWorkspaceApp;
 import com.examworkspace.apps.AppLauncher;
-import com.examworkspace.model.AppEntry;
-import com.examworkspace.model.Room;
-import com.examworkspace.model.RoomStatus;
-import com.examworkspace.model.Teacher;
+import com.examworkspace.model.*;
 import com.examworkspace.room.RoomService;
 import java.io.File;
 import java.io.IOException;
@@ -17,7 +14,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import javafx.animation.PauseTransition;
+import javafx.application.Platform;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
@@ -25,6 +26,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
+import javafx.scene.control.Tooltip;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.MouseButton;
@@ -35,7 +37,9 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.scene.shape.Circle;
 import javafx.stage.FileChooser;
+import javafx.util.Duration;
 
 public class DashboardView extends BorderPane {
 
@@ -67,6 +71,7 @@ public class DashboardView extends BorderPane {
 
     private final List<Room> loaded = new ArrayList<>();
     private final Map<Long, List<AppEntry>> apps = new HashMap<>();
+    private final Map<Long, List<RoomMember>> members = new HashMap<>();
     private final Map<Long, Label> statusBadges = new HashMap<>();
     private final Map<Long, StackPane> statusDots = new HashMap<>();
     private final Label livePill = new Label();
@@ -75,6 +80,7 @@ public class DashboardView extends BorderPane {
     private final VBox panelHost = new VBox();
     private final VBox roomNav = new VBox(4);
     private ScrollPane scroll;
+    private ScheduledExecutorService memberRefresher;
 
     private Filter filter = Filter.ALL;
     private Long selectedId;
@@ -90,11 +96,17 @@ public class DashboardView extends BorderPane {
         setLeft(sidebar());
         setCenter(main());
         parentProperty().addListener((obs, previous, parent) -> {
-            if (parent == null && boundary != null) {
-                boundary.stop();
+            if (parent == null) {
+                if (boundary != null) {
+                    boundary.stop();
+                }
+                stopMemberRefresh();
+            } else {
+                startMemberRefresh();
             }
         });
         reload();
+        startMemberRefresh();
     }
 
     private Node sidebar() {
@@ -149,10 +161,20 @@ public class DashboardView extends BorderPane {
         Label title = new Label("Exam Rooms");
         title.getStyleClass().add("dash-title");
         livePill.getStyleClass().add("live-pill");
+
+        Label serverBadge = new Label("📡 Server: " + com.examworkspace.db.Database.getServerDisplayName());
+        serverBadge.setStyle("-fx-padding: 4 10; -fx-background-color: rgba(16, 185, 129, 0.15); -fx-text-fill: #10b981; -fx-font-weight: bold; -fx-background-radius: 12;");
+        serverBadge.setCursor(javafx.scene.Cursor.HAND);
+        serverBadge.setTooltip(new Tooltip("Click to view or change Server Connection"));
+        serverBadge.setOnMouseClicked(e -> ServerConfigDialog.show(this, () -> {
+            serverBadge.setText("📡 Server: " + com.examworkspace.db.Database.getServerDisplayName());
+            reload();
+        }));
+
         Button create = new Button("+  New Room");
         create.getStyleClass().add("pink");
         create.setOnAction(e -> createRoom());
-        HBox header = new HBox(12, new VBox(2, kicker, title), Ui.spacer(), livePill, create);
+        HBox header = new HBox(12, new VBox(2, kicker, title), Ui.spacer(), serverBadge, livePill, create);
         header.setAlignment(Pos.CENTER_LEFT);
 
         ToggleGroup group = new ToggleGroup();
@@ -190,14 +212,55 @@ public class DashboardView extends BorderPane {
         return page;
     }
 
+    private void startMemberRefresh() {
+        if (memberRefresher != null) {
+            return;
+        }
+        memberRefresher = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "dashboard-member-refresher");
+            t.setDaemon(true);
+            return t;
+        });
+        memberRefresher.scheduleWithFixedDelay(() -> {
+            Long currentSelected = selectedId;
+            for (Room room : List.copyOf(loaded)) {
+                if (currentSelected != null && room.id() != currentSelected && room.statusAt(Instant.now()) != RoomStatus.LIVE) {
+                    continue;
+                }
+                try {
+                    List<RoomMember> fresh = rooms.listMembers(room);
+                    List<RoomMember> previous = members.get(room.id());
+                    if (!fresh.equals(previous)) {
+                        members.put(room.id(), fresh);
+                        if (currentSelected != null && currentSelected == room.id()) {
+                            Platform.runLater(() -> renderPanel(Instant.now()));
+                        }
+                    }
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }, 3, 3, TimeUnit.SECONDS);
+    }
+
+    private void stopMemberRefresh() {
+        if (memberRefresher != null) {
+            memberRefresher.shutdownNow();
+            memberRefresher = null;
+        }
+    }
+
     private void reload() {
         try {
             loaded.clear();
             loaded.addAll(rooms.listRooms());
             apps.clear();
             apps.putAll(rooms.appsByRoom());
+            members.clear();
+            for (Room room : loaded) {
+                members.put(room.id(), rooms.listMembers(room));
+            }
         } catch (RuntimeException ex) {
-            Ui.showError(this, "Could not load rooms", ex);
+            System.err.println("[DashboardView] Failed to reload rooms: " + ex.getMessage());
         }
         if (selectedId != null && loaded.stream().noneMatch(room -> room.id() == selectedId)) {
             selectedId = null;
@@ -289,7 +352,9 @@ public class DashboardView extends BorderPane {
         styleStatus(badge, room.statusAt(now));
         statusBadges.put(room.id(), badge);
 
-        Label count = new Label(room.appCount() == 1 ? "1 app" : room.appCount() + " apps");
+        int joined = members.getOrDefault(room.id(), List.of()).size();
+        Label count = new Label((room.appCount() == 1 ? "1 app" : room.appCount() + " apps")
+                + "  ·  " + (joined == 1 ? "1 joined" : joined + " joined"));
         count.getStyleClass().add("card-meta");
         HBox top = new HBox(8, badge, Ui.spacer(), count);
         top.setAlignment(Pos.CENTER_LEFT);
@@ -355,8 +420,7 @@ public class DashboardView extends BorderPane {
         Button browse = new Button("Browse");
         browse.getStyleClass().add("quiet");
         browse.setOnAction(e -> browseExe(room));
-        Button workspace = new Button("Open workspace", Icons.of(Icons.APPS, 14));
-        workspace.getStyleClass().add("quiet");
+        Button workspace = Ui.primaryButton("Open workspace", Icons.MONITOR);
         workspace.setOnAction(e -> app.showRoom(teacher, rooms, room));
         Button delete = new Button("Delete room");
         delete.getStyleClass().add("quiet");
@@ -378,8 +442,47 @@ public class DashboardView extends BorderPane {
         HBox scheduleRow = new HBox(8, panelStatus, Ui.spacer(), editSchedule, changePassword);
         scheduleRow.setAlignment(Pos.CENTER_LEFT);
 
-        panelHost.getChildren().add(new VBox(14, head, scheduleRow, credentials(room), appWrap(room)));
+        panelHost.getChildren().add(new VBox(14, head, scheduleRow, credentials(room),
+                membersSection(room), appWrap(room)));
         panelHost.getStyleClass().setAll("exam-panel");
+    }
+
+    private Node membersSection(Room room) {
+        List<RoomMember> roster = members.getOrDefault(room.id(), List.of());
+        Label title = new Label("Live students");
+        title.getStyleClass().add("panel-title");
+        Label subtitle = new Label(roster.isEmpty()
+                ? "No students are currently live in this room."
+                : roster.size() == 1 ? "1 student live" : roster.size() + " students live");
+        subtitle.getStyleClass().add("panel-subtitle");
+
+        VBox block = new VBox(10, new VBox(2, title, subtitle));
+        if (roster.isEmpty()) {
+            return block;
+        }
+
+        FlowPane flow = new FlowPane(10, 10);
+        for (RoomMember member : roster) {
+            flow.getChildren().add(memberChip(member));
+        }
+        block.getChildren().add(flow);
+        return block;
+    }
+
+    private Node memberChip(RoomMember member) {
+        Circle presence = new Circle(4);
+        presence.setStyle("-fx-fill: #22c55e;");
+        Label roll = new Label(member.rollNumber());
+        roll.getStyleClass().add("app-chip-name");
+        Label name = new Label(member.displayName());
+        name.getStyleClass().add("app-chip-kind");
+        Label kind = new Label("Live");
+        kind.getStyleClass().add("chip");
+        VBox text = new VBox(1, name, roll);
+        HBox chip = new HBox(8, presence, text, kind);
+        chip.setAlignment(Pos.CENTER_LEFT);
+        chip.getStyleClass().add("app-chip");
+        return chip;
     }
 
     private Node credentials(Room room) {
@@ -401,22 +504,45 @@ public class DashboardView extends BorderPane {
 
         Label passCaption = new Label("PASSWORD");
         passCaption.getStyleClass().add("cred-caption");
-        Label passValue = new Label(passwordVisible ? room.roomPassword() : masked(room.roomPassword()));
+        boolean hasPassword = room.roomPassword() != null && !room.roomPassword().isBlank();
+        Label passValue = new Label();
         passValue.getStyleClass().add("cred-value");
-        Button reveal = Ui.iconButton(passwordVisible ? Icons.EYE_OFF : Icons.EYE,
-                passwordVisible ? "Hide password" : "Show password");
+        Button reveal = Ui.iconButton(Icons.EYE, "Show password");
         reveal.getStyleClass().add("icon-button-on-dark");
+
+        // The eye button really toggles: masked dots <-> the password itself,
+        // right in the card (it used to only flash a toast and the label always
+        // showed the password in plain text, so the option did nothing).
+        Runnable applyRevealState = () -> {
+            if (!hasPassword) {
+                passValue.setText("—");
+                reveal.setVisible(false);
+                reveal.setManaged(false);
+                return;
+            }
+            if (passwordVisible) {
+                passValue.setText(room.roomPassword());
+                reveal.setGraphic(Icons.of(Icons.EYE_OFF, 16));
+                reveal.setTooltip(new Tooltip("Hide password"));
+            } else {
+                passValue.setText("••••••••");
+                reveal.setGraphic(Icons.of(Icons.EYE, 16));
+                reveal.setTooltip(new Tooltip("Show password"));
+            }
+        };
+        applyRevealState.run();
         reveal.setOnAction(e -> {
             passwordVisible = !passwordVisible;
-            renderPanel(Instant.now());
+            applyRevealState.run();
         });
+
         HBox passRow = new HBox(8, new VBox(2, passCaption, passValue), reveal);
         passRow.setAlignment(Pos.CENTER_LEFT);
         passRow.getStyleClass().add("cred-box");
         HBox.setHgrow(idRow, Priority.ALWAYS);
         HBox.setHgrow(passRow, Priority.ALWAYS);
 
-        Label note = new Label("Only you can see this room's ID and password.");
+        Label note = new Label("Only you can see this room's ID and password. Passwords are stored plainly in this version.");
         note.getStyleClass().add("cred-note");
         VBox block = new VBox(8, new HBox(10, idRow, passRow), note);
         return block;
@@ -499,7 +625,7 @@ public class DashboardView extends BorderPane {
             return;
         }
         long wait = Math.min(java.time.Duration.between(now, next).toMillis() + 400, 30_000);
-        boundary = new PauseTransition(javafx.util.Duration.millis(Math.max(wait, 400)));
+        boundary = new PauseTransition(Duration.millis(Math.max(wait, 400)));
         boundary.setOnFinished(e -> refreshStatuses());
         boundary.play();
     }
@@ -673,9 +799,5 @@ public class DashboardView extends BorderPane {
             return DAY.format(start) + "  ·  " + CLOCK.format(start) + " – " + CLOCK.format(end);
         }
         return DAY.format(start) + " " + CLOCK.format(start) + "  –  " + DAY.format(end) + " " + CLOCK.format(end);
-    }
-
-    private static String masked(String password) {
-        return "•".repeat(Math.max(6, Math.min(password.length(), 12)));
     }
 }

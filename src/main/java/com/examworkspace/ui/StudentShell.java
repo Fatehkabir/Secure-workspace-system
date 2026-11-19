@@ -56,8 +56,8 @@ abstract class StudentShell extends BorderPane {
         Region grow = new Region();
         VBox.setVgrow(grow, Priority.ALWAYS);
 
-        String displayName = student != null ? student.fullName() : "Guest student";
-        String handleText = student != null ? "@" + student.username() : "Guest session";
+        String displayName = (student != null && !student.fullName().isBlank()) ? student.fullName() : "Student";
+        String handleText = (student != null && !student.username().isBlank()) ? "@" + student.username() : "";
         Ui.Avatar avatar = new Ui.Avatar(36);
         avatar.setName(displayName);
         Label name = new Label(displayName);
