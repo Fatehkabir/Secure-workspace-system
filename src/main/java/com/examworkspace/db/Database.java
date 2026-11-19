@@ -386,17 +386,17 @@ public final class Database {
                 LanDiscoveryService.startBeacon(5432, "examworkspace");
             } else {
                 // Try auto-discover Teacher PC on LAN (Student PC scenario)
-                var discovered = LanDiscoveryService.discover(1500);
+                var discovered = LanDiscoveryService.discover(3000);
                 if (discovered != null) {
-                    String targetUrl = discovered.toJdbcUrl();
-                    if (testConnection(targetUrl, user, pass)) {
-                        configure(targetUrl, user, pass);
-                        saveConfig(targetUrl, user, pass);
+                    String ipUrl = discovered.toIpJdbcUrl();
+                    if (testConnection(ipUrl, user, pass)) {
+                        configure(ipUrl, user, pass);
+                        saveConfig(ipUrl, user, pass);
                     } else {
-                        String ipUrl = discovered.toIpJdbcUrl();
-                        if (testConnection(ipUrl, user, pass)) {
-                            configure(ipUrl, user, pass);
-                            saveConfig(ipUrl, user, pass);
+                        String targetUrl = discovered.toJdbcUrl();
+                        if (testConnection(targetUrl, user, pass)) {
+                            configure(targetUrl, user, pass);
+                            saveConfig(targetUrl, user, pass);
                         }
                     }
                 }
@@ -498,11 +498,15 @@ public final class Database {
             addColumn(st, "rooms", "room_password", "VARCHAR(128)");
             addColumn(st, "rooms", "starts_at", "BIGINT");
             addColumn(st, "rooms", "ends_at", "BIGINT");
+            addColumn(st, "rooms", "allow_student_exit", "BOOLEAN DEFAULT FALSE");
 
             backfillRooms(conn);
 
             st.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_teachers_google_sub ON teachers(google_sub)");
             st.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_rooms_code ON rooms(room_code)");
+
+            // Screen-share session table (auto-migration: added in screenshare feature)
+            com.examworkspace.screenshare.ScreenShareSessionStore.ensureTable();
 
             try {
                 st.execute("DROP INDEX IF EXISTS ux_room_members_roll");

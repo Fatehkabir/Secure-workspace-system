@@ -12,4 +12,5 @@ module com.examworkspace {
 
     exports com.examworkspace;
     exports com.examworkspace.net;
+    exports com.examworkspace.screenshare;
 }

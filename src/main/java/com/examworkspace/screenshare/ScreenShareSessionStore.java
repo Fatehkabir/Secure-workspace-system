@@ -1,7 +1,6 @@
 package com.examworkspace.screenshare;
 
 import com.examworkspace.db.Database;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
