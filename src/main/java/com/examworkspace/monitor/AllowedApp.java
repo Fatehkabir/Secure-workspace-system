@@ -90,43 +90,53 @@ public record AllowedApp(String name, String launchTarget, String targetType, St
         if (exe.isEmpty()) return Optional.empty();
 
         String proc = lower(processName);
-        if (!proc.isEmpty() && proc.equals(exe)) return Optional.of("process name " + exe);
+        if (!proc.isEmpty()) {
+            if (proc.equals(exe) || (proc + ".exe").equals(exe) || stripExe(proc).equals(stripExe(exe))) {
+                return Optional.of("process name " + exe);
+            }
+        }
 
         String target = lower(launchTarget);
         if (!target.isEmpty()) {
             String targetFile = fileName(target);
             if ("EXECUTABLE".equals(targetType)) {
-                if (target.equals(path) || targetFile.equals(exe)) return Optional.of("executable " + targetFile);
-            } else if (targetFile.endsWith(".exe") && targetFile.equals(exe)) {
+                if (target.equals(path) || targetFile.equals(exe) || stripExe(targetFile).equals(stripExe(exe))) {
+                    return Optional.of("executable " + targetFile);
+                }
+            } else if (targetFile.endsWith(".exe") && (targetFile.equals(exe) || stripExe(targetFile).equals(stripExe(exe)))) {
                 return Optional.of("app path " + targetFile);
             }
         }
 
-        // Microsoft Store apps (Calculator, Settings, ...) are hosted by ApplicationFrameHost.exe;
-        // the only reliable clue is the window title.
+        // Window title matching:
+        // Window titles for apps like Notepad ("Untitled - Notepad"), VS Code ("file.py - Visual Studio Code"),
+        // Calculator, Office apps, etc. clearly display the application name.
+        String title = compact(windowTitle);
+        String n = compact(name);
+        if (n.length() >= 3 && title.length() >= 3 && (title.contains(n) || n.contains(title))) {
+            return Optional.of("window title \"" + windowTitle + "\"");
+        }
+
         if (exe.equals(UWP_HOST)) {
-            String title = compact(windowTitle);
-            String n = compact(name);
-            if (n.length() >= 3 && title.length() >= 3 && (title.contains(n) || n.contains(title))) {
-                return Optional.of("window title \"" + windowTitle + "\"");
-            }
             return Optional.empty();
         }
 
-        // The exact exe is already known (saved process name or a chosen .exe file), so an
-        // exe that did not match above is a different program: no guessing by name.
-        if ("EXECUTABLE".equals(targetType) || proc.endsWith(".exe")) return Optional.empty();
-
         String base = compact(stripExe(exe));
-        if (NO_FUZZY.contains(base)) return Optional.empty();
-        String baseNoDigits = base.replaceAll("\\d+$", "");
-        if (baseNoDigits.length() >= 3) base = baseNoDigits;
-        if (base.length() < 3) return Optional.empty();
-
-        String n = compact(name);
-        if (n.length() >= 3 && n.contains(base)) return Optional.of("app name \"" + name + "\"");
-        if (n.length() >= 5 && base.contains(n)) return Optional.of("app name \"" + name + "\"");
-        if (base.length() >= 5 && compact(target).contains(base)) return Optional.of("app id " + launchTarget);
+        if (base.endsWith("w") && base.length() > 4) {
+            base = base.substring(0, base.length() - 1);
+        }
+        if (!NO_FUZZY.contains(base)) {
+            String baseNoDigits = base.replaceAll("\\d+$", "");
+            if (baseNoDigits.length() >= 3) base = baseNoDigits;
+            if (base.length() >= 3) {
+                if (n.length() >= 3 && (n.contains(base) || base.contains(n))) {
+                    return Optional.of("app name \"" + name + "\"");
+                }
+                if (base.length() >= 4 && compact(target).contains(base)) {
+                    return Optional.of("app id " + launchTarget);
+                }
+            }
+        }
         return Optional.empty();
     }
 

@@ -55,6 +55,11 @@ public final class ViolationStore {
      */
     public static void record(long roomId, Long studentId, String rollNumber, String studentName,
                               String detectedApp, String executablePath, String screenshotBase64) throws SQLException {
+        record(roomId, studentId, rollNumber, studentName, detectedApp, executablePath, System.currentTimeMillis(), screenshotBase64);
+    }
+
+    public static void record(long roomId, Long studentId, String rollNumber, String studentName,
+                              String detectedApp, String executablePath, long occurredAt, String screenshotBase64) throws SQLException {
         withRetry(() -> {
             try (Connection conn = Database.connect();
                  PreparedStatement ps = conn.prepareStatement("""
@@ -72,9 +77,9 @@ public final class ViolationStore {
                 ps.setString(4, clip(blankTo(studentName, "Student"), 128));
                 ps.setString(5, clip(blankTo(detectedApp, "unknown app"), 512));
                 ps.setString(6, clip(executablePath, 1024));
-                ps.setLong(7, System.currentTimeMillis());
+                ps.setLong(7, occurredAt);
                 if (screenshotBase64 == null) {
-                    ps.setNull(8, Types.CLOB);
+                    ps.setNull(8, Database.isPostgres() ? Types.VARCHAR : Types.CLOB);
                 } else {
                     ps.setString(8, screenshotBase64);
                 }
