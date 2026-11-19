@@ -35,7 +35,7 @@ import javafx.scene.text.TextAlignment;
 import javafx.stage.Window;
 import javafx.util.Duration;
 
-final class Ui {
+public final class Ui {
 
     private Ui() {
     }
@@ -140,7 +140,7 @@ final class Ui {
         return false;
     }
 
-    static void toast(Node owner, String message, boolean success) {
+    public static void toast(Node owner, String message, boolean success) {
         Scene scene = owner.getScene();
         if (scene == null || scene.getRoot() == null) {
             return;

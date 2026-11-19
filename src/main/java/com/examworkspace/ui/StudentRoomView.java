@@ -11,6 +11,10 @@ import com.examworkspace.monitor.LockStore;
 import com.examworkspace.monitor.StudentRoomMonitor;
 import com.examworkspace.room.RoomUrlPolicyService;
 import com.examworkspace.room.StudentRoomService;
+import com.examworkspace.screenshare.ScreenShareClient;
+import com.examworkspace.screenshare.ScreenShareSession;
+import com.examworkspace.screenshare.ScreenShareSessionStore;
+import com.examworkspace.screenshare.ScreenShareWindow;
 import java.awt.Desktop;
 import java.io.IOException;
 import java.net.URI;
@@ -46,6 +50,7 @@ public class StudentRoomView extends StudentShell implements ExamWorkspaceApp.Le
 
     private final StudentRoomService rooms;
     private final Room room;
+    private final ExamWorkspaceApp app;
     private final Student student;
 
     private final ObservableList<AppEntry> apps = FXCollections.observableArrayList();
@@ -74,17 +79,33 @@ public class StudentRoomView extends StudentShell implements ExamWorkspaceApp.Le
     private volatile boolean locked = false;
     private StudentRoomMonitor monitor;
     private Button leaveButton;
+    private Hyperlink crumbLink;
+    private volatile boolean exitAllowed = false;
     private int wrongCodeAttempts = 0;
     private long codeLockedUntil = 0;
 
+    private ScreenShareClient screenShareClient;
+    private ScreenShareWindow screenShareWindow;
+    private ScheduledExecutorService screenSharePoller;
+    private ScreenShareSession currentShareSession;
+
     public StudentRoomView(ExamWorkspaceApp app, Room room, Student student) {
         super(app, student, room.name());
+        this.app = app;
         this.rooms = new StudentRoomService();
         this.room = room;
         this.student = student;
 
         Hyperlink crumb = new Hyperlink("Available rooms");
-        crumb.setOnAction(e -> app.showStudentDashboard(student));
+        this.crumbLink = crumb;
+        crumb.setOnAction(e -> {
+            if (!exitAllowed) {
+                Ui.toast(this, "The teacher has not allowed students to exit the exam workspace yet.", false);
+                return;
+            }
+            leaveRoom();
+            app.showStudentDashboard(student);
+        });
         Label crumbSeparator = new Label("/");
         Label crumbCurrent = new Label(room.name());
         crumbCurrent.getStyleClass().add("breadcrumb-current");
@@ -104,7 +125,12 @@ public class StudentRoomView extends StudentShell implements ExamWorkspaceApp.Le
 
         leaveButton = new Button("Leave room");
         leaveButton.getStyleClass().add("quiet");
+        leaveButton.setDisable(true);
         leaveButton.setOnAction(e -> {
+            if (!exitAllowed) {
+                Ui.toast(this, "The teacher has not allowed students to exit the exam workspace yet.", false);
+                return;
+            }
             leaveRoom();
             app.showStudentDashboard(student);
         });
@@ -197,13 +223,17 @@ public class StudentRoomView extends StudentShell implements ExamWorkspaceApp.Le
 
         sceneProperty().addListener((obs, oldScene, newScene) -> {
             if (newScene != null) {
+                app.enterExamLockdown();
                 monitor.start();
                 startAppListRefresh();
                 startLockPolling();
+                startScreenSharePolling();
             } else {
+                app.exitExamLockdown();
                 monitor.stop();
                 stopAppListRefresh();
                 stopLockPolling();
+                stopScreenSharePolling();
                 leaveRoom();
             }
         });
@@ -468,58 +498,63 @@ public class StudentRoomView extends StudentShell implements ExamWorkspaceApp.Le
 
     private void buildLockOverlay() {
         Label icon = new Label("\uD83D\uDD12");
-        icon.setStyle("-fx-font-size: 48px; -fx-text-fill: #ef4444;");
+        icon.setStyle("-fx-font-size: 52px; -fx-effect: dropshadow(gaussian, rgba(239, 68, 68, 0.6), 20, 0, 0, 2);");
 
         Label heading = new Label("Workspace Locked");
-        heading.setStyle("-fx-font-size: 22px; -fx-font-weight: bold; -fx-text-fill: #1e293b;");
+        heading.setStyle("-fx-font-size: 26px; -fx-font-weight: 800; -fx-text-fill: #f8fafc; -fx-effect: dropshadow(gaussian, rgba(239, 68, 68, 0.35), 18, 0, 0, 3);");
 
         lockReasonLabel.setWrapText(true);
-        lockReasonLabel.setMaxWidth(440);
-        lockReasonLabel.setStyle("-fx-text-fill: #b91c1c; -fx-font-weight: bold; -fx-font-size: 13.5px; "
-                + "-fx-background-color: #fef2f2; -fx-padding: 8 12; -fx-background-radius: 6;");
+        lockReasonLabel.setMaxWidth(460);
+        lockReasonLabel.setStyle("-fx-text-fill: #fca5a5; -fx-font-weight: 700; -fx-font-size: 13.5px; "
+                + "-fx-background-color: rgba(239, 68, 68, 0.14); -fx-padding: 10 16; -fx-background-radius: 12; "
+                + "-fx-border-color: rgba(239, 68, 68, 0.35); -fx-border-radius: 12;");
         lockReasonLabel.setAlignment(Pos.CENTER);
 
-        Label ssNotice = new Label("\uD83D\uDCF8 A screenshot of your screen was recorded and delivered to the teacher.");
+        Label ssNotice = new Label("\uD83D\uDCF8 Evidence recorded: A screenshot was delivered to your teacher's Live Monitor.");
         ssNotice.setWrapText(true);
         ssNotice.setMaxWidth(440);
         ssNotice.setAlignment(Pos.CENTER);
-        ssNotice.setStyle("-fx-text-fill: #64748b; -fx-font-size: 12px;");
+        ssNotice.setStyle("-fx-text-fill: #94a3b8; -fx-font-size: 12px; -fx-font-style: italic;");
 
-        Label waiting = new Label("Only your teacher can unlock this \u2014 from their Live Monitor dashboard, "
-                + "by providing you the 6-character unlock code, or in person by entering the room password.");
+        Label waiting = new Label("Ask your teacher to unlock your workspace remotely,\n"
+                + "or ask your teacher for your unique 6-character unlock code.");
         waiting.setWrapText(true);
         waiting.setMaxWidth(440);
         waiting.setAlignment(Pos.CENTER);
-        waiting.setStyle("-fx-text-fill: #475569; -fx-font-size: 12.5px;");
+        waiting.setStyle("-fx-text-fill: #cbd5e1; -fx-font-size: 12.5px;");
 
-        codeField.setPromptText("Unlock code / Room password");
-        codeField.setMaxWidth(260);
+        codeField.setPromptText("Enter 6-character unlock code");
+        codeField.setMaxWidth(280);
         codeField.setAlignment(Pos.CENTER);
-        codeField.setStyle("-fx-font-size: 14px; -fx-padding: 8 12;");
+        codeField.setStyle("-fx-font-size: 14.5px; -fx-font-family: 'Cascadia Code', Consolas, monospace; -fx-padding: 10 16; "
+                + "-fx-background-radius: 14; -fx-background-color: rgba(15, 23, 42, 0.75); -fx-text-fill: #ffffff; "
+                + "-fx-border-color: rgba(239, 68, 68, 0.4); -fx-border-radius: 14;");
 
-        codeError.setStyle("-fx-text-fill: #b91c1c; -fx-font-weight: bold; -fx-font-size: 12px;");
+        codeError.setStyle("-fx-text-fill: #f87171; -fx-font-weight: bold; -fx-font-size: 12px;");
         codeError.setWrapText(true);
         codeError.setMaxWidth(380);
         codeError.setVisible(false);
 
         Button submit = new Button("Unlock Workspace");
         submit.getStyleClass().add("primary");
-        submit.setStyle("-fx-font-size: 13.5px; -fx-padding: 8 20;");
+        submit.setStyle("-fx-font-size: 14px; -fx-padding: 10 26; -fx-background-radius: 14; "
+                + "-fx-background-color: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); -fx-text-fill: white; -fx-font-weight: 700; "
+                + "-fx-effect: dropshadow(gaussian, rgba(239, 68, 68, 0.45), 14, 0, 0, 4); -fx-cursor: hand;");
         submit.setDefaultButton(true);
         submit.setOnAction(e -> submitUnlockCode());
         codeField.setOnAction(e -> submitUnlockCode());
 
-        VBox box = new VBox(14, icon, heading, lockReasonLabel, ssNotice, waiting, codeField, submit, codeError);
+        VBox box = new VBox(15, icon, heading, lockReasonLabel, ssNotice, waiting, codeField, submit, codeError);
         box.setAlignment(Pos.CENTER);
-        box.setMaxWidth(500);
-        box.setPadding(new Insets(32));
-        box.setStyle("-fx-background-color: #ffffff; -fx-background-radius: 16; "
-                + "-fx-border-color: #dc2626; -fx-border-width: 2.5; -fx-border-radius: 16; "
-                + "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.45), 24, 0, 0, 8);");
+        box.setMaxWidth(520);
+        box.setPadding(new Insets(38, 36, 38, 36));
+        box.setStyle("-fx-background-color: linear-gradient(180deg, #151d38 0%, #0c1224 100%); -fx-background-radius: 24; "
+                + "-fx-border-color: rgba(239, 68, 68, 0.45); -fx-border-width: 1.5; -fx-border-radius: 24; "
+                + "-fx-effect: dropshadow(gaussian, rgba(239, 68, 68, 0.22), 36, 0, 0, 12);");
 
         lockOverlay.getChildren().setAll(box);
         lockOverlay.setAlignment(Pos.CENTER);
-        lockOverlay.setStyle("-fx-background-color: rgba(10, 16, 32, 0.94);");
+        lockOverlay.setStyle("-fx-background-color: rgba(6, 10, 20, 0.95);");
         lockOverlay.setFocusTraversable(true);
         lockOverlay.setOnMouseClicked(javafx.event.Event::consume);
         lockOverlay.setVisible(false);
@@ -572,7 +607,7 @@ public class StudentRoomView extends StudentShell implements ExamWorkspaceApp.Le
         lockOverlay.setVisible(false);
         lockOverlay.setManaged(false);
         if (leaveButton != null) {
-            leaveButton.setDisable(false);
+            leaveButton.setDisable(!exitAllowed);
         }
     }
 
@@ -600,16 +635,9 @@ public class StudentRoomView extends StudentShell implements ExamWorkspaceApp.Le
                 ok = false;
             }
 
-            // Fallback for offline / in-person teacher unlock using room password or local code
+            // Fallback for offline / in-person teacher unlock using local 6-character code
             if (!ok) {
-                if (room.roomPassword() != null && entered.equals(room.roomPassword())) {
-                    ok = true;
-                    LockStore.clearLocalLock(room.id(), studentDisplayName());
-                    try {
-                        LockStore.unlock(room.id(), studentDisplayName());
-                    } catch (Exception ignored) {
-                    }
-                } else if (LockStore.checkLocalUnlockCode(room.id(), studentDisplayName(), entered)) {
+                if (LockStore.checkLocalUnlockCode(room.id(), studentDisplayName(), entered)) {
                     ok = true;
                     LockStore.clearLocalLock(room.id(), studentDisplayName());
                 }
@@ -657,6 +685,23 @@ public class StudentRoomView extends StudentShell implements ExamWorkspaceApp.Le
         lockPoller.scheduleWithFixedDelay(() -> {
             try {
                 rooms.heartbeat(room.id(), studentDisplayName());
+
+                boolean currentExit = rooms.isExitAllowed(room.id());
+                if (currentExit != exitAllowed) {
+                    exitAllowed = currentExit;
+                    Platform.runLater(() -> {
+                        if (leaveButton != null && !locked) {
+                            leaveButton.setDisable(!exitAllowed);
+                        }
+                        if (exitAllowed) {
+                            app.exitExamLockdown();
+                            Ui.toast(this, "The teacher has allowed students to exit. Lockdown mode released.", true);
+                        } else {
+                            app.enterExamLockdown();
+                            Ui.toast(this, "The teacher has locked the exam. Fullscreen lockdown enabled.", false);
+                        }
+                    });
+                }
 
                 java.util.Optional<LockStore.LockedStudent> lock = LockStore.findLock(room.id(), studentDisplayName());
                 // Bug 1 fix: stillLocked is determined by DB only (teacher's JVM writes DB).
@@ -763,5 +808,78 @@ public class StudentRoomView extends StudentShell implements ExamWorkspaceApp.Le
             }
             setGraphic(box);
         }
+    }
+
+    private void startScreenSharePolling() {
+        if (screenSharePoller != null) {
+            return;
+        }
+        screenSharePoller = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "screenshare-poller");
+            t.setDaemon(true);
+            return t;
+        });
+        screenSharePoller.scheduleWithFixedDelay(this::checkScreenShareSession, 1, 2, TimeUnit.SECONDS);
+    }
+
+    private void stopScreenSharePolling() {
+        if (screenSharePoller != null) {
+            screenSharePoller.shutdownNow();
+            screenSharePoller = null;
+        }
+        closeScreenShareClient();
+    }
+
+    private void checkScreenShareSession() {
+        try {
+            ScreenShareSession session = ScreenShareSessionStore.find(room.id());
+            if (session != null && session.isValid()) {
+                if (currentShareSession == null || !currentShareSession.equals(session)) {
+                    currentShareSession = session;
+                    Platform.runLater(() -> connectToScreenShare(session));
+                }
+            } else {
+                if (currentShareSession != null) {
+                    currentShareSession = null;
+                    Platform.runLater(this::closeScreenShareClient);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void connectToScreenShare(ScreenShareSession session) {
+        closeScreenShareClient();
+        currentShareSession = session;
+        screenShareWindow = new ScreenShareWindow();
+        screenShareWindow.show();
+
+        screenShareClient = new ScreenShareClient(
+                session.hostAddress(),
+                session.port(),
+                frameBytes -> {
+                    if (screenShareWindow != null) {
+                        screenShareWindow.updateFrame(frameBytes);
+                    }
+                },
+                () -> Platform.runLater(this::closeScreenShareClient)
+        );
+        screenShareClient.start();
+    }
+
+    private void closeScreenShareClient() {
+        currentShareSession = null;
+        if (screenShareClient != null) {
+            screenShareClient.stop();
+            screenShareClient = null;
+        }
+        if (screenShareWindow != null) {
+            screenShareWindow.close();
+            screenShareWindow = null;
+        }
+    }
+
+    public boolean canExit() {
+        return exitAllowed;
     }
 }

@@ -6,7 +6,9 @@ import com.examworkspace.model.Room;
 import com.examworkspace.monitor.AllowedApp;
 import com.examworkspace.monitor.LockStore;
 import com.examworkspace.monitor.ViolationStore;
+import com.examworkspace.room.RoomService;
 import com.examworkspace.room.RoomUrlPolicyService;
+import com.examworkspace.model.RoomMember;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
@@ -74,6 +76,12 @@ public class RoomMonitorPanel extends VBox {
     private final Label statViolations = new Label("0");
     private final Label statLocked = new Label("0");
     private final Label statWebsites = new Label("None");
+    private final Label statActiveStudents = new Label("0");
+    private final Label statInactiveStudents = new Label("0");
+
+    private final VBox rosterSection = new VBox(8);
+    private final Label rosterHeading = new Label();
+    private final HBox rosterCardsBox = new HBox(12);
 
     private final TextField searchField = Ui.searchField("Filter violations by student or app/website...");
 
@@ -303,7 +311,7 @@ public class RoomMonitorPanel extends VBox {
         });
         VBox.setVgrow(table, Priority.ALWAYS);
 
-        getChildren().setAll(statsBar, liveLabel, allowedLabel, lockedSection, bannerBox, filterBar, table);
+        getChildren().setAll(statsBar, liveLabel, allowedLabel, rosterSection, lockedSection, bannerBox, filterBar, table);
     }
 
     private HBox buildStatsBar() {
@@ -315,10 +323,12 @@ public class RoomMonitorPanel extends VBox {
         liveDot.setStyle("-fx-text-fill: #4ade80; -fx-font-weight: bold; -fx-font-size: 12px;");
 
         HBox cardViolations = buildMetricCard("Violations", statViolations, "#f87171");
+        HBox cardActive = buildMetricCard("Active Students", statActiveStudents, "#4ade80");
+        HBox cardInactive = buildMetricCard("Inactive / Left", statInactiveStudents, "#94a3b8");
         HBox cardLocked = buildMetricCard("Locked Students", statLocked, "#fbbf24");
         HBox cardWeb = buildMetricCard("Websites Policy", statWebsites, "#60a5fa");
 
-        HBox bar = new HBox(12, roomCodeChip, liveDot, Ui.spacer(), cardViolations, cardLocked, cardWeb);
+        HBox bar = new HBox(12, roomCodeChip, liveDot, Ui.spacer(), cardActive, cardInactive, cardViolations, cardLocked, cardWeb);
         bar.setAlignment(Pos.CENTER_LEFT);
         bar.setPadding(new Insets(2, 0, 4, 0));
         return bar;
@@ -361,6 +371,7 @@ public class RoomMonitorPanel extends VBox {
         });
         poller.scheduleWithFixedDelay(this::poll, 0, POLL_SECONDS, TimeUnit.SECONDS);
         poller.scheduleWithFixedDelay(this::pollLocked, 0, POLL_SECONDS, TimeUnit.SECONDS);
+        poller.scheduleWithFixedDelay(this::pollRoster, 0, POLL_SECONDS, TimeUnit.SECONDS);
     }
 
     public synchronized void stopPolling() {
@@ -411,6 +422,105 @@ public class RoomMonitorPanel extends VBox {
         } catch (Exception ex) {
             System.err.println("[RoomMonitorPanel] Could not read flags: " + ex.getMessage());
         }
+    }
+
+    private void pollRoster() {
+        try {
+            List<RoomMember> all = RoomService.listAllMembers(room.id());
+            List<RoomMember> active = new ArrayList<>();
+            List<RoomMember> inactive = new ArrayList<>();
+            for (RoomMember m : all) {
+                if (m.isActive()) {
+                    active.add(m);
+                } else {
+                    inactive.add(m);
+                }
+            }
+            Platform.runLater(() -> {
+                statActiveStudents.setText(String.valueOf(active.size()));
+                statInactiveStudents.setText(String.valueOf(inactive.size()));
+                renderRoster(active, inactive);
+            });
+        } catch (Exception ex) {
+            System.err.println("[RoomMonitorPanel] Could not poll roster: " + ex.getMessage());
+        }
+    }
+
+    private void renderRoster(List<RoomMember> active, List<RoomMember> inactive) {
+        if (active.isEmpty() && inactive.isEmpty()) {
+            rosterSection.setVisible(false);
+            rosterSection.setManaged(false);
+            rosterSection.getChildren().clear();
+            return;
+        }
+
+        rosterSection.setVisible(true);
+        rosterSection.setManaged(true);
+
+        rosterHeading.setText("👥 Student Roster & Live Activity (" + active.size() + " active, " + inactive.size() + " inactive):");
+        rosterHeading.setStyle("-fx-font-weight: bold; -fx-text-fill: #e2e8f0; -fx-font-size: 13.5px;");
+
+        VBox activeBox = new VBox(6);
+        activeBox.setStyle("-fx-background-color: rgba(34, 197, 94, 0.08); -fx-border-color: rgba(34, 197, 94, 0.25); "
+                + "-fx-border-radius: 10; -fx-background-radius: 10; -fx-padding: 10;");
+        HBox.setHgrow(activeBox, Priority.ALWAYS);
+
+        Label activeTitle = new Label("🟢 Active & Connected (" + active.size() + ")");
+        activeTitle.setStyle("-fx-text-fill: #4ade80; -fx-font-weight: bold; -fx-font-size: 12.5px;");
+        activeBox.getChildren().add(activeTitle);
+
+        if (active.isEmpty()) {
+            Label noActive = new Label("No students currently connected.");
+            noActive.setStyle("-fx-text-fill: #94a3b8; -fx-font-style: italic; -fx-font-size: 11.5px;");
+            activeBox.getChildren().add(noActive);
+        } else {
+            for (RoomMember m : active) {
+                Label dot = new Label("●");
+                dot.setStyle("-fx-text-fill: #4ade80; -fx-font-size: 11px;");
+                Label name = new Label(m.displayName());
+                name.setStyle("-fx-text-fill: #f8fafc; -fx-font-weight: bold; -fx-font-size: 12px;");
+                String roll = (m.rollNumber() != null && !m.rollNumber().isBlank() && !m.rollNumber().equals(m.displayName()))
+                        ? " [" + m.rollNumber() + "]" : "";
+                Label meta = new Label(roll + " · joined " + formatTime(m.joinedAt()));
+                meta.setStyle("-fx-text-fill: #94a3b8; -fx-font-size: 11px;");
+                HBox row = new HBox(6, dot, name, meta);
+                row.setAlignment(Pos.CENTER_LEFT);
+                activeBox.getChildren().add(row);
+            }
+        }
+
+        VBox inactiveBox = new VBox(6);
+        inactiveBox.setStyle("-fx-background-color: rgba(148, 163, 184, 0.08); -fx-border-color: rgba(148, 163, 184, 0.25); "
+                + "-fx-border-radius: 10; -fx-background-radius: 10; -fx-padding: 10;");
+        HBox.setHgrow(inactiveBox, Priority.ALWAYS);
+
+        Label inactiveTitle = new Label("⚪ Inactive / Disconnected (" + inactive.size() + ")");
+        inactiveTitle.setStyle("-fx-text-fill: #cbd5e1; -fx-font-weight: bold; -fx-font-size: 12.5px;");
+        inactiveBox.getChildren().add(inactiveTitle);
+
+        if (inactive.isEmpty()) {
+            Label noInactive = new Label("All joined students are currently active.");
+            noInactive.setStyle("-fx-text-fill: #94a3b8; -fx-font-style: italic; -fx-font-size: 11.5px;");
+            inactiveBox.getChildren().add(noInactive);
+        } else {
+            for (RoomMember m : inactive) {
+                Label dot = new Label("○");
+                dot.setStyle("-fx-text-fill: #94a3b8; -fx-font-size: 11px;");
+                Label name = new Label(m.displayName());
+                name.setStyle("-fx-text-fill: #94a3b8; -fx-font-size: 12px;");
+                String roll = (m.rollNumber() != null && !m.rollNumber().isBlank() && !m.rollNumber().equals(m.displayName()))
+                        ? " [" + m.rollNumber() + "]" : "";
+                String leftTime = m.leftAt() != null ? "left " + formatTime(m.leftAt()) : "disconnected";
+                Label meta = new Label(roll + " · " + leftTime);
+                meta.setStyle("-fx-text-fill: #64748b; -fx-font-size: 11px;");
+                HBox row = new HBox(6, dot, name, meta);
+                row.setAlignment(Pos.CENTER_LEFT);
+                inactiveBox.getChildren().add(row);
+            }
+        }
+
+        HBox listsContainer = new HBox(12, activeBox, inactiveBox);
+        rosterSection.getChildren().setAll(rosterHeading, listsContainer);
     }
 
     private void pollLocked() {

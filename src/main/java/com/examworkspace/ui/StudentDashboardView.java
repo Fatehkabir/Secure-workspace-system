@@ -142,7 +142,20 @@ public class StudentDashboardView extends BorderPane {
         Label title = new Label("Available rooms");
         title.getStyleClass().add("dash-title");
         livePill.getStyleClass().add("live-pill");
-        HBox header = new HBox(12, new VBox(2, kicker, title), Ui.spacer(), livePill);
+
+        Label serverBadge = new Label("📡 Server: " + com.examworkspace.db.Database.getServerDisplayName());
+        serverBadge.setStyle("-fx-padding: 4 10; -fx-background-color: rgba(99, 102, 241, 0.15); -fx-text-fill: #a5b4fc; -fx-font-weight: bold; -fx-background-radius: 12; -fx-cursor: hand;");
+        serverBadge.setTooltip(new javafx.scene.control.Tooltip("Click to change Server / Connect to Teacher PC"));
+        serverBadge.setOnMouseClicked(e -> ServerConfigDialog.show(this, () -> {
+            serverBadge.setText("📡 Server: " + com.examworkspace.db.Database.getServerDisplayName());
+            reload();
+        }));
+
+        Button refreshBtn = new Button("🔄 Refresh");
+        refreshBtn.getStyleClass().addAll("quiet", "sm");
+        refreshBtn.setOnAction(e -> reload());
+
+        HBox header = new HBox(12, new VBox(2, kicker, title), Ui.spacer(), serverBadge, refreshBtn, livePill);
         header.setAlignment(Pos.CENTER_LEFT);
 
         ToggleGroup group = new ToggleGroup();
@@ -233,8 +246,12 @@ public class StudentDashboardView extends BorderPane {
         statusBadges.clear();
         Instant now = Instant.now();
         if (loaded.isEmpty()) {
+            Button connectServerBtn = Ui.primaryButton("Connect to Teacher PC", Icons.REFRESH);
+            connectServerBtn.setOnAction(e -> ServerConfigDialog.show(this, this::reload));
+
             cards.getChildren().add(Ui.emptyState(Icons.ROOM, "No rooms available",
-                    "When a teacher creates a live or upcoming exam room on this computer, it will show up here."));
+                    "If your teacher created a room on another PC, click below to connect to the Teacher PC over Wi-Fi.",
+                    connectServerBtn));
             panelHost.getChildren().clear();
             panelHost.getStyleClass().clear();
             return;

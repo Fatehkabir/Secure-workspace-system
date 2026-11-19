@@ -50,14 +50,11 @@ public class ExamWorkspaceApp extends Application {
         // Covers the window being closed outright (the X button) while a student is in a room --
         // navigating to another screen is already handled by StudentRoomView's own scene listener.
         stage.setOnCloseRequest(e -> {
-<<<<<<< HEAD
             if (currentView instanceof StudentRoomView studentRoom && !studentRoom.canExit()) {
                 e.consume();
                 Ui.toast(studentRoom, "The teacher has locked room exit until the exam is finished.", false);
                 return;
             }
-=======
->>>>>>> e7c81e45d495d8dd87bda0603cfa76e68600d125
             com.examworkspace.net.LanDiscoveryService.stopBeacon();
             if (currentView instanceof Leavable leavable) {
                 leavable.leaveRoom();

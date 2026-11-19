@@ -8,6 +8,10 @@ import com.examworkspace.model.Room;
 import com.examworkspace.model.Teacher;
 import com.examworkspace.room.RoomService;
 import com.examworkspace.room.RoomUrlPolicyService;
+import com.examworkspace.screenshare.LanAddress;
+import com.examworkspace.screenshare.ScreenCaptureBroadcaster;
+import com.examworkspace.screenshare.ScreenShareServer;
+import com.examworkspace.screenshare.ScreenShareSessionStore;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -59,6 +63,11 @@ public class RoomView extends AppShell {
     private final TextField search = Ui.searchField("Search apps in this room");
     private final RoomMonitorPanel monitorPanel;
 
+    private ScreenShareServer screenServer;
+    private ScreenCaptureBroadcaster screenBroadcaster;
+    private Button shareScreenBtn;
+    private Button allowExitBtn;
+
     public RoomView(ExamWorkspaceApp app, Teacher teacher, RoomService rooms, Room room) {
         super(app, teacher, room.name());
         this.rooms = rooms;
@@ -88,8 +97,16 @@ public class RoomView extends AppShell {
         Button webPolicy = new Button("Website restrictions");
         webPolicy.setOnAction(e -> openUrlPolicyDialog());
 
+        shareScreenBtn = new Button("Share Screen", Icons.of(Icons.MONITOR, 16));
+        shareScreenBtn.getStyleClass().add("primary");
+        shareScreenBtn.setOnAction(e -> toggleScreenShare());
+
+        allowExitBtn = new Button();
+        updateAllowExitButtonState(rooms.isStudentExitAllowed(room.id()));
+        allowExitBtn.setOnAction(e -> toggleAllowExit());
+
         HBox header = new HBox(12,
-                new VBox(4, breadcrumb, title, subtitle), Ui.spacer(), search, browse, webPolicy, addInstalled);
+                new VBox(4, breadcrumb, title, subtitle), Ui.spacer(), search, browse, webPolicy, allowExitBtn, shareScreenBtn, addInstalled);
         header.setAlignment(Pos.CENTER_LEFT);
         header.getStyleClass().add("page-header");
 
@@ -150,6 +167,7 @@ public class RoomView extends AppShell {
                 monitorPanel.startPolling();
             } else {
                 monitorPanel.stopPolling();
+                stopScreenShare();
             }
         });
 
@@ -537,6 +555,80 @@ public class RoomView extends AppShell {
         }
         if (chosen.size() == 1) {
             Ui.toast(this, "Starting " + chosen.getFirst().name(), true);
+        }
+    }
+
+    private void toggleScreenShare() {
+        if (screenBroadcaster != null && screenBroadcaster.isRunning()) {
+            stopScreenShare();
+        } else {
+            startScreenShare();
+        }
+    }
+
+    private void startScreenShare() {
+        try {
+            if (screenServer == null) {
+                screenServer = new ScreenShareServer();
+                screenServer.start();
+            }
+            if (screenBroadcaster == null) {
+                screenBroadcaster = new ScreenCaptureBroadcaster(screenServer);
+                screenBroadcaster.start();
+            }
+            String lanIp = LanAddress.get();
+            ScreenShareSessionStore.publish(room.id(), lanIp, screenServer.getPort());
+
+            shareScreenBtn.setText("Stop Sharing");
+            shareScreenBtn.getStyleClass().remove("primary");
+            shareScreenBtn.getStyleClass().add("danger");
+            Ui.toast(this, "Screen sharing started on " + lanIp + ":" + screenServer.getPort(), true);
+        } catch (Exception ex) {
+            stopScreenShare();
+            Ui.showError(this, "Could not start screen share", ex);
+        }
+    }
+
+    private void stopScreenShare() {
+        ScreenShareSessionStore.remove(room.id());
+        if (screenBroadcaster != null) {
+            screenBroadcaster.stop();
+            screenBroadcaster = null;
+        }
+        if (screenServer != null) {
+            screenServer.stop();
+            screenServer = null;
+        }
+        if (shareScreenBtn != null) {
+            shareScreenBtn.setText("Share Screen");
+            shareScreenBtn.getStyleClass().remove("danger");
+            shareScreenBtn.getStyleClass().add("primary");
+        }
+    }
+
+    private void updateAllowExitButtonState(boolean allowed) {
+        if (allowed) {
+            allowExitBtn.setText("Exit Allowed (Students Can Leave)");
+            allowExitBtn.setGraphic(Icons.of(Icons.CHECK, 16));
+            allowExitBtn.getStyleClass().removeAll("quiet", "danger", "primary");
+            allowExitBtn.setStyle("-fx-background-color: rgba(34, 197, 94, 0.2); -fx-text-fill: #4ade80; -fx-border-color: rgba(34, 197, 94, 0.4); -fx-border-radius: 8; -fx-background-radius: 8; -fx-font-weight: bold;");
+        } else {
+            allowExitBtn.setText("Exit Locked (Students Trapped)");
+            allowExitBtn.setGraphic(Icons.of(Icons.LOCK, 16));
+            allowExitBtn.getStyleClass().removeAll("quiet", "danger", "primary");
+            allowExitBtn.setStyle("-fx-background-color: rgba(239, 68, 68, 0.2); -fx-text-fill: #f87171; -fx-border-color: rgba(239, 68, 68, 0.4); -fx-border-radius: 8; -fx-background-radius: 8; -fx-font-weight: bold;");
+        }
+    }
+
+    private void toggleAllowExit() {
+        boolean current = rooms.isStudentExitAllowed(room.id());
+        boolean target = !current;
+        rooms.setStudentExitAllowed(room.id(), target);
+        updateAllowExitButtonState(target);
+        if (target) {
+            Ui.toast(this, "Students are now permitted to leave and close the exam workspace.", true);
+        } else {
+            Ui.toast(this, "Student exit is now locked. Students cannot leave or close the workspace.", false);
         }
     }
 

@@ -34,13 +34,17 @@ final class PasswordBox extends StackPane {
         toggle.selectedProperty().addListener((obs, was, showing) -> {
             icon.setStyle(Icons.shapeStyle(showing ? Icons.EYE_OFF : Icons.EYE));
             toggle.setTooltip(new Tooltip(showing ? "Hide password" : "Show password"));
+            // Sync caret position before switching so the visible text position is consistent
+            int caret = showing ? masked.getCaretPosition() : revealed.getCaretPosition();
             revealed.setVisible(showing);
             revealed.setManaged(showing);
             masked.setVisible(!showing);
             masked.setManaged(!showing);
             TextField focused = showing ? revealed : masked;
             focused.requestFocus();
-            focused.end();
+            // Place caret at the same position, then fall back to end() if out of range
+            int len = focused.getText() == null ? 0 : focused.getText().length();
+            focused.positionCaret(Math.min(caret, len));
         });
 
         getChildren().addAll(masked, revealed, toggle);

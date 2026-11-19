@@ -289,7 +289,6 @@ public class StudentRoomService {
         }
     }
 
-<<<<<<< HEAD
     public boolean isExitAllowed(long roomId) {
         String sql = "SELECT allow_student_exit FROM rooms WHERE id = ?";
         try (Connection conn = Database.connect(); PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -304,8 +303,6 @@ public class StudentRoomService {
         return false;
     }
 
-=======
->>>>>>> e7c81e45d495d8dd87bda0603cfa76e68600d125
     private static String validateRoll(String rollNumber, String fallbackName) {
         String value = rollNumber == null ? "" : rollNumber.strip();
         if (value.isEmpty()) {

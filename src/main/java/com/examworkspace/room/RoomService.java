@@ -198,6 +198,52 @@ public class RoomService {
         }
     }
 
+    public static List<RoomMember> listAllMembers(long roomId) {
+        long timeoutThreshold = System.currentTimeMillis() - 8000;
+        try (Connection conn = Database.connect()) {
+            try (PreparedStatement autoLeave = conn.prepareStatement(
+                    "UPDATE room_members SET left_at = COALESCE(last_seen_at, ?) WHERE room_id = ? AND left_at IS NULL AND (last_seen_at IS NULL OR last_seen_at < ?)")) {
+                autoLeave.setLong(1, timeoutThreshold);
+                autoLeave.setLong(2, roomId);
+                autoLeave.setLong(3, timeoutThreshold);
+                autoLeave.executeUpdate();
+            } catch (SQLException ignored) {
+            }
+
+            String sql = """
+                    SELECT m.id, m.room_id, m.student_id, m.roll_number, m.display_name, m.joined_at, m.left_at
+                    FROM room_members m
+                    WHERE m.room_id = ?
+                    ORDER BY (CASE WHEN m.left_at IS NULL THEN 0 ELSE 1 END), LOWER(m.display_name)""";
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setLong(1, roomId);
+                List<RoomMember> members = new ArrayList<>();
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        long studentId = rs.getLong("student_id");
+                        Long studentRef = rs.wasNull() ? null : studentId;
+                        Instant joinedAt = rs.getTimestamp("joined_at") == null
+                                ? Instant.EPOCH
+                                : rs.getTimestamp("joined_at").toInstant();
+                        long leftAtMillis = rs.getLong("left_at");
+                        Instant leftAt = rs.wasNull() ? null : Instant.ofEpochMilli(leftAtMillis);
+                        members.add(new RoomMember(
+                                rs.getLong("id"),
+                                rs.getLong("room_id"),
+                                studentRef,
+                                rs.getString("roll_number"),
+                                rs.getString("display_name"),
+                                joinedAt,
+                                leftAt));
+                    }
+                }
+                return members;
+            }
+        } catch (SQLException e) {
+            throw new DataAccessException("Could not load all room members", e);
+        }
+    }
+
     public List<AppEntry> listApps(Room room) {
         return appsByRoom().getOrDefault(room.id(), List.of());
     }
@@ -393,6 +439,33 @@ public class RoomService {
             throw new RoomException("Room password must be at most 128 characters.");
         }
         return value;
+    }
+
+    public boolean isStudentExitAllowed(long roomId) {
+        String sql = "SELECT allow_student_exit FROM rooms WHERE id = ?";
+        try (Connection conn = Database.connect(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, roomId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getBoolean("allow_student_exit");
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[RoomService] Could not check allow_student_exit: " + e.getMessage());
+        }
+        return false;
+    }
+
+    public void setStudentExitAllowed(long roomId, boolean allowed) {
+        String sql = "UPDATE rooms SET allow_student_exit = ? WHERE id = ? AND teacher_id = ?";
+        try (Connection conn = Database.connect(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setBoolean(1, allowed);
+            ps.setLong(2, roomId);
+            ps.setLong(3, teacher.id());
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new DataAccessException("Could not update student exit permission", e);
+        }
     }
 
     private static void validateSchedule(Instant start, Instant end, Instant keepStart) throws RoomException {

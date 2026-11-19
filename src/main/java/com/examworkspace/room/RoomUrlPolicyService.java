@@ -1,8 +1,5 @@
 package com.examworkspace.room;
 
-<<<<<<< HEAD
-public final class RoomUrlPolicyService {
-=======
 import com.examworkspace.browser.UrlAllowlistPolicy;
 import com.examworkspace.db.DataAccessException;
 import com.examworkspace.db.Database;
@@ -138,4 +135,3 @@ public final class RoomUrlPolicyService {
         return UrlAllowlistPolicy.isAllowed(candidateUrl, policy);
     }
 }
->>>>>>> e7c81e45d495d8dd87bda0603cfa76e68600d125

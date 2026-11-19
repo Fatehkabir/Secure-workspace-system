@@ -2,9 +2,16 @@ package com.examworkspace.ui;
 
 import com.examworkspace.db.Database;
 import com.examworkspace.net.LanDiscoveryService;
+import javafx.application.Platform;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
-import javafx.scene.control.*;
+import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.Dialog;
+import javafx.scene.control.Label;
+import javafx.scene.control.PasswordField;
+import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
@@ -60,24 +67,24 @@ public final class ServerConfigDialog {
             statusMsg.setStyle("-fx-text-fill: #94a3b8;");
 
             Ui.runAsync(
-                () -> LanDiscoveryService.discover(2000),
-                discovered -> {
-                    autoDetectBtn.setDisable(false);
-                    if (discovered != null) {
-                        hostField.setText(discovered.hostName());
-                        portField.setText(String.valueOf(discovered.port()));
-                        statusMsg.setText("Found Teacher PC: " + discovered.hostName() + " (" + discovered.ipAddress() + ")!");
-                        statusMsg.setStyle("-fx-text-fill: #10b981; -fx-font-weight: bold;");
-                    } else {
-                        statusMsg.setText("No teacher broadcast found. Ensure Teacher app is open on the same Wi-Fi.");
-                        statusMsg.setStyle("-fx-text-fill: #f59e0b;");
+                    () -> LanDiscoveryService.discover(3000),
+                    discovered -> {
+                        autoDetectBtn.setDisable(false);
+                        if (discovered != null) {
+                            hostField.setText(discovered.ipAddress());
+                            portField.setText(String.valueOf(discovered.port()));
+                            statusMsg.setText("Found Teacher PC: " + discovered.hostName() + " (" + discovered.ipAddress() + ")!");
+                            statusMsg.setStyle("-fx-text-fill: #10b981; -fx-font-weight: bold;");
+                        } else {
+                            statusMsg.setText("No teacher broadcast found. Ensure Teacher app is open on the same Wi-Fi.");
+                            statusMsg.setStyle("-fx-text-fill: #f59e0b;");
+                        }
+                    },
+                    err -> {
+                        autoDetectBtn.setDisable(false);
+                        statusMsg.setText("Auto-detect failed: " + err.getMessage());
+                        statusMsg.setStyle("-fx-text-fill: #ef4444;");
                     }
-                },
-                err -> {
-                    autoDetectBtn.setDisable(false);
-                    statusMsg.setText("Auto-detect failed: " + err.getMessage());
-                    statusMsg.setStyle("-fx-text-fill: #ef4444;");
-                }
             );
         });
 
@@ -130,26 +137,26 @@ public final class ServerConfigDialog {
             statusMsg.setStyle("-fx-text-fill: #94a3b8;");
 
             Ui.runAsync(
-                () -> Database.testConnection(url, user, pass),
-                success -> {
-                    connectBtn.setDisable(false);
-                    if (Boolean.TRUE.equals(success)) {
-                        Database.saveConfig(url, user, pass);
-                        dialog.setResult(Boolean.TRUE);
-                        dialog.close();
-                        if (onConnected != null) {
-                            onConnected.run();
+                    () -> Database.testConnection(url, user, pass),
+                    success -> {
+                        connectBtn.setDisable(false);
+                        if (Boolean.TRUE.equals(success)) {
+                            Database.saveConfig(url, user, pass);
+                            dialog.setResult(Boolean.TRUE);
+                            dialog.close();
+                            if (onConnected != null) {
+                                onConnected.run();
+                            }
+                        } else {
+                            statusMsg.setText("Could not connect to " + host + ":" + port + ". Check device name and Wi-Fi.");
+                            statusMsg.setStyle("-fx-text-fill: #ef4444;");
                         }
-                    } else {
-                        statusMsg.setText("Could not connect to " + host + ":" + port + ". Check device name and Wi-Fi.");
+                    },
+                    err -> {
+                        connectBtn.setDisable(false);
+                        statusMsg.setText("Connection failed: " + err.getMessage());
                         statusMsg.setStyle("-fx-text-fill: #ef4444;");
                     }
-                },
-                err -> {
-                    connectBtn.setDisable(false);
-                    statusMsg.setText("Connection failed: " + err.getMessage());
-                    statusMsg.setStyle("-fx-text-fill: #ef4444;");
-                }
             );
         });
 
