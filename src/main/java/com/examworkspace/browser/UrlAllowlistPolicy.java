@@ -3,7 +3,12 @@ package com.examworkspace.browser;
 import java.net.IDN;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.*;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 public record UrlAllowlistPolicy(boolean enabled, boolean enforceHttps, boolean blockInternalPages, List<Rule> rules) {
 
