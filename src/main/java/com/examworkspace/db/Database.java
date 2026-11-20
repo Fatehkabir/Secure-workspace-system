@@ -500,6 +500,21 @@ public final class Database {
             addColumn(st, "rooms", "ends_at", "BIGINT");
             addColumn(st, "rooms", "allow_student_exit", "BOOLEAN DEFAULT FALSE");
 
+            // Exam submission storage table
+            String blobType = usePostgres ? "BYTEA" : "BLOB";
+            st.execute("CREATE TABLE IF NOT EXISTS exam_submissions (" +
+                    "id " + idDef + ", " +
+                    "room_id BIGINT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, " +
+                    "student_name VARCHAR(128) NOT NULL, " +
+                    "roll_number VARCHAR(64), " +
+                    "file_name VARCHAR(256) NOT NULL, " +
+                    "file_bytes " + blobType + " NOT NULL, " +
+                    "file_size BIGINT NOT NULL, " +
+                    "submitted_at BIGINT NOT NULL, " +
+                    "resubmitted_count INT NOT NULL DEFAULT 0)");
+            st.execute("CREATE INDEX IF NOT EXISTS ix_exam_submissions_room " +
+                    "ON exam_submissions(room_id)");
+
             backfillRooms(conn);
 
             st.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_teachers_google_sub ON teachers(google_sub)");

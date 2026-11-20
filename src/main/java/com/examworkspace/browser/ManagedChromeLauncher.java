@@ -1,10 +1,15 @@
 package com.examworkspace.browser;
 
 import java.io.IOException;
+import java.net.HttpURLConnection;
+import java.net.URI;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Locale;
 import java.util.List;
+import java.util.UUID;
 
 public final class ManagedChromeLauncher {
 

@@ -1,18 +1,24 @@
 package com.examworkspace.net;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
-import java.net.*;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.net.InterfaceAddress;
+import java.net.NetworkInterface;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 /**
  * Lightweight UDP broadcast service for LAN discovery.
@@ -63,6 +69,7 @@ public final class LanDiscoveryService {
         }
         broadcasting.set(true);
         String hostName = getLocalDeviceName();
+        String lanIp = com.examworkspace.screenshare.LanAddress.get();
 
         beaconThread = new Thread(() -> {
             try (DatagramSocket socket = new DatagramSocket()) {
@@ -70,7 +77,8 @@ public final class LanDiscoveryService {
                 while (broadcasting.get()) {
                     String nonce = randomToken();
                     String payload = MAGIC_HEADER + hostName + ":" + dbPort + ":" + dbName + ":" + nonce + ":"
-                            + sign(hostName + ":" + dbPort + ":" + dbName + ":" + nonce, secret);
+                            + sign(hostName + ":" + dbPort + ":" + dbName + ":" + nonce, secret)
+                            + ":" + lanIp;
                     byte[] data = payload.getBytes(StandardCharsets.UTF_8);
 
                     for (InetAddress bcast : getBroadcastAddresses()) {
@@ -138,7 +146,9 @@ public final class LanDiscoveryService {
                             if (!expected.equals(sig)) {
                                 continue;
                             }
-                            String senderIp = packet.getAddress().getHostAddress();
+                            String senderIp = (parts.length >= 6 && !parts[5].trim().isBlank())
+                                    ? parts[5].trim()
+                                    : packet.getAddress().getHostAddress();
                             return new ServerInfo(host, senderIp, port, db);
                         }
                     }
@@ -180,24 +190,7 @@ public final class LanDiscoveryService {
         if (fromSys != null) {
             return fromSys;
         }
-        Path path = com.examworkspace.db.Database.dataDir().resolve("lan.secret");
-        try {
-            if (java.nio.file.Files.exists(path)) {
-                String existing = java.nio.file.Files.readString(path, StandardCharsets.UTF_8).trim();
-                if (!existing.isEmpty()) {
-                    return existing;
-                }
-            }
-        } catch (IOException ignored) {
-        }
-        try {
-            java.nio.file.Files.createDirectories(path.getParent());
-            String generated = randomToken();
-            java.nio.file.Files.writeString(path, generated, StandardCharsets.UTF_8);
-            return generated;
-        } catch (IOException ignored) {
-            return null;
-        }
+        return "EXAMWORKSPACE_DEFAULT_LAN_SECRET_V1";
     }
 
     private static String value(String candidate) {
